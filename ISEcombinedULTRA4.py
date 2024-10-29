@@ -14,7 +14,7 @@ import specs
 import gc
 
 
-def interactive_normalization(star, epoch_numbers, band='COMBINED', batch_size=6, big_batch_size=10, filter_func=None,
+def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=None,
                               overwrite=False, backup=True, load_saved=False):
     """
     Interactive method to manually adjust points for normalization across multiple epochs.
@@ -23,8 +23,6 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', batch_size=6
         star: The star object.
         epoch_numbers (list): List of epoch numbers to process.
         band (str): The band of the spectrum (default 'COMBINED').
-        batch_size (int): Batch size for processing data.
-        big_batch_size (int): Bigger batch size for filtering.
         filter_func (callable or None): A function to filter points automatically. If None, all points are used.
         overwrite (bool): Whether to overwrite existing saved properties. Default is False.
         backup (bool): Whether to create a backup if overwriting. Default is True.
@@ -42,23 +40,18 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', batch_size=6
     # Initialize variables to store data
     wavelength = None
     flux = None
-    interpolated_flux = None
 
     # Variables to store the shared anchor points across epochs
     selected_wavelengths_tmp = []
-    selected_fluxes_tmp = []
     press_event = {'x': None, 'y': None, 'button': None}
 
     # Initialize variables for nonlocal use in nested functions
     scatter = None
     selected_scatter = None
-    debug_text = None
-    kept_flux_means = []
-    kept_wavelength_means = []
 
     # Initialize plot with three subplots
-    fig, (ax1, ax_mid, ax2) = plt.subplots(3, 1, figsize=(10, 10))  # Adjusted figsize
-    plt.subplots_adjust(bottom=0.2, hspace=0.4)  # Adjust hspace for spacing between subplots
+    fig, (ax1, ax_mid, ax2) = plt.subplots(3, 1, figsize=(10, 10))
+    plt.subplots_adjust(bottom=0.2, hspace=0.4)
 
     # Initialize line objects for the middle and bottom plots
     line_data_mid = None
@@ -90,11 +83,11 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', batch_size=6
         wavelength = fits_file.data['WAVE'][0]
         flux = fits_file.data['FLUX'][0]
 
-
     def update_plot():
-        nonlocal scatter, selected_scatter, debug_text, kept_flux_means, kept_wavelength_means
+        nonlocal scatter, selected_scatter
         nonlocal line_data_mid, line_selected_points_mid, line_interpolated_flux
         nonlocal line_normalized_flux, line_hline
+
         # Clear ax1 and reset line objects when changing epochs
         ax1.clear()
 
@@ -115,35 +108,16 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', batch_size=6
             line_hline.remove()
             line_hline = None
 
-        # Compute the data points to plot
-        num_points = len(flux)
-        num_batches = int(np.ceil(num_points / batch_size))
-        kept_flux_means = []
-        kept_wavelength_means = []
-        for i in range(num_batches):
-            start_idx = i * batch_size
-            end_idx = min((i + 1) * batch_size, num_points)
-            flux_batch = flux[start_idx:end_idx]
-            wavelength_batch = wavelength[start_idx:end_idx]
+        # Plot all data points on ax1
+        scatter, = ax1.plot(wavelength, flux, '.', color='gray', markersize=2, label='Data')
 
-            # Assuming ut.double_robust_mean is a function you've defined elsewhere
-            robust_mean_flux = ut.double_robust_mean(flux_batch)
-            mean_wavelength = np.mean(wavelength_batch)
-            kept_flux_means.append(robust_mean_flux)
-            kept_wavelength_means.append(mean_wavelength)
-
-        # Get fluxes at selected wavelengths for the current epoch
+        # Get fluxes at selected wavelengths
         if selected_wavelengths_tmp:
             selected_fluxes_current_epoch = np.interp(selected_wavelengths_tmp, wavelength, flux)
         else:
             selected_fluxes_current_epoch = []
 
-        # Plot data points on ax1
-        scatter, = ax1.plot(kept_wavelength_means, kept_flux_means, '.', color='gray', markersize=2, label='Data')
         selected_scatter, = ax1.plot(selected_wavelengths_tmp, selected_fluxes_current_epoch, 'o', color='red', markersize=5, label='Selected Points')
-
-        # Add a text box in the plot to display debug messages (optional)
-        # debug_text = ax1.text(0.05, 0.95, '', transform=ax1.transAxes, fontsize=10, verticalalignment='top')
 
         ax1.set_ylabel('Flux')
         ax1.set_title(f'Interactive Normalization - Star: {star.star_name}, Epoch: {epoch_numbers[current_epoch_idx]}, Band: {band}')
@@ -160,6 +134,7 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', batch_size=6
     def plot_interpolated_flux():
         nonlocal line_data_mid, line_selected_points_mid, line_interpolated_flux
         if len(selected_wavelengths_tmp) < 2:
+            ax_mid.clear()
             ax_mid.set_title("Not enough points selected for interpolation.")
             ax_mid.set_ylabel('Flux')
             return
@@ -169,15 +144,15 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', batch_size=6
         # Perform linear interpolation between selected points
         sorted_indices = np.argsort(selected_wavelengths_tmp)
         selected_wavelengths_sorted = np.array(selected_wavelengths_tmp)[sorted_indices]
-        selected_fluxes_sorted = selected_fluxes_current_epoch[sorted_indices]
+        selected_fluxes_sorted = np.array(selected_fluxes_current_epoch)[sorted_indices]
 
         interpolated_flux = np.interp(wavelength, selected_wavelengths_sorted, selected_fluxes_sorted)
 
         # Update or create line objects
         if line_data_mid is None:
-            line_data_mid, = ax_mid.plot(kept_wavelength_means, kept_flux_means, '.', color='gray', markersize=2, label='Data')
+            line_data_mid, = ax_mid.plot(wavelength, flux, '.', color='gray', markersize=2, label='Data')
         else:
-            line_data_mid.set_data(kept_wavelength_means, kept_flux_means)
+            line_data_mid.set_data(wavelength, flux)
 
         if line_selected_points_mid is None:
             line_selected_points_mid, = ax_mid.plot(selected_wavelengths_tmp, selected_fluxes_current_epoch, 'o', color='red', markersize=5, label='Selected Points')
@@ -200,6 +175,7 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', batch_size=6
     def plot_normalized_flux():
         nonlocal line_normalized_flux, line_hline
         if len(selected_wavelengths_tmp) < 2:
+            ax2.clear()
             ax2.set_title("Not enough points selected for interpolation.")
             ax2.set_xlabel('Wavelength')
             ax2.set_ylabel('Normalized Flux')
@@ -210,7 +186,7 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', batch_size=6
         # Perform linear interpolation between selected points
         sorted_indices = np.argsort(selected_wavelengths_tmp)
         selected_wavelengths_sorted = np.array(selected_wavelengths_tmp)[sorted_indices]
-        selected_fluxes_sorted = selected_fluxes_current_epoch[sorted_indices]
+        selected_fluxes_sorted = np.array(selected_fluxes_current_epoch)[sorted_indices]
 
         interpolated_flux = np.interp(wavelength, selected_wavelengths_sorted, selected_fluxes_sorted)
         normalized_flux = flux / interpolated_flux
@@ -232,7 +208,7 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', batch_size=6
         if not ax2.get_legend():
             ax2.legend()
 
-    # Event handling functions
+    # Event handling functions remain unchanged
 
     def onpress(event):
         if event.inaxes != ax1:
@@ -254,13 +230,14 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', batch_size=6
     def onclick(press_event):
         if press_event['x'] is None or press_event['y'] is None:
             return
-        if press_event['button'] == 1:  # Left click to add/move points
+        if press_event['button'] == 1:  # Left click to add points
             idx = np.abs(wavelength - press_event['x']).argmin()
             x_threshold = (ax1.get_xlim()[1] - ax1.get_xlim()[0]) * 0.005
             if np.abs(wavelength[idx] - press_event['x']) < x_threshold:
                 wl = wavelength[idx]
                 if wl not in selected_wavelengths_tmp:
                     selected_wavelengths_tmp.append(wl)
+                    selected_wavelengths_tmp.sort()
                     update_selected_scatter()
         elif press_event['button'] == 3:  # Right click to delete points
             if selected_wavelengths_tmp:
@@ -285,6 +262,7 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', batch_size=6
     fig.canvas.mpl_connect('button_release_event', onrelease)
 
     # Buttons for navigation and saving
+
     ax_next_epoch = plt.axes([0.7, 0.02, 0.1, 0.05])
     btn_next_epoch = Button(ax_next_epoch, 'Next Epoch')
 
@@ -353,6 +331,7 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', batch_size=6
         gc.collect()
 
     print('Finished processing all epochs.')
+
 
 
 def filter_f(wavelength, flux, batch_size=6, big_batch_size=10):
