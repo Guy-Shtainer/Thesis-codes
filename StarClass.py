@@ -452,7 +452,7 @@ class Star:
             
             # Generate backup file name with date and time
             timestamp = datetime.now().strftime("%d_%m_%Y__%H_%M_%S")
-            backup_file_name = f"{property_name}_backup_{timestamp}.npz"
+            backup_file_name = f"{property_name}_backup_{timestamp}"
             backup_path = os.path.join(backup_dir, backup_file_name)
             
             # Move the existing file to the backup location
