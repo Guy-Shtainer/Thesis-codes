@@ -317,10 +317,10 @@ class Star:
     def _load_file(self, file_path):
         """
         Helper method to load data from a file.
-
+    
         Parameters:
             file_path (str): The path to the file to load.
-
+    
         Returns:
             dict or Any: The data loaded from the file.
                          Returns None if an error occurs.
@@ -329,7 +329,14 @@ class Star:
             # Assuming the files are saved as .npz files
             if file_path.endswith('.npz'):
                 with np.load(file_path, allow_pickle=True) as data:
-                    return dict(data)
+                    # Check the keys in the saved file
+                    keys = data.files
+                    if len(keys) == 1 and keys[0] == 'data':
+                        # The file contains a single array or list
+                        return data['data']
+                    else:
+                        # The file contains multiple arrays or variables
+                        return dict(data)
             else:
                 print(f"Unsupported file format: '{file_path}'")
                 return None
@@ -391,6 +398,7 @@ class Star:
 ########################################                                     ########################################
 
     def save_property(self, property_name, property_data, epoch_number, band, overwrite=False, backup=True):
+
         # Get the path of the observation file
         file_path = self.get_file_path(epoch_number, band)
         # Determine the directory where the file is located
@@ -409,8 +417,15 @@ class Star:
                 print(f"File exists. Creating a backup before overwriting: {output_path}")
                 self.backup_property(output_path, overwrite)
         
-        np.savez(output_path, **property_data)
+        # Check the type of property_data and save accordingly
+        if isinstance(property_data, dict):
+            # Save dictionary using np.savez
+            np.savez(output_path, **property_data)
+        else:
+            # Save array or list using np.savez with a default variable name
+            np.savez(output_path, data=property_data)
         print(f"Property saved at {output_path}")
+
 
 ########################################                                     ########################################
 
