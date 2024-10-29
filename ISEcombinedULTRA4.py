@@ -67,29 +67,29 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', batch_size=6
     line_normalized_flux = None
     line_hline = None
 
+    # Load saved anchor points once at the beginning if load_saved is True
+    if load_saved:
+        try:
+            epoch_number = epoch_numbers[0]  # Use the first epoch to load the anchor points
+            saved_wavelengths = star.load_property('norm_anchor_wavelengths', epoch_number, band)
+            if saved_wavelengths is not None and len(saved_wavelengths) > 0:
+                selected_wavelengths_tmp = saved_wavelengths.tolist()
+                print(f"Loaded saved anchor points.")
+            else:
+                print(f"No saved anchor points found.")
+        except FileNotFoundError:
+            print(f"No saved anchor points file.")
+        except Exception as e:
+            print(f"Error loading saved anchor points: {e}")
+
     def load_data():
-        nonlocal wavelength, flux, selected_wavelengths_tmp
+        nonlocal wavelength, flux
         epoch_number = epoch_numbers[current_epoch_idx]
         # Load observation for the current epoch and band
         fits_file = star.load_observation(epoch_number, band)
         wavelength = fits_file.data['WAVE'][0]
         flux = fits_file.data['FLUX'][0]
 
-        # Load saved anchor points if load_saved is True
-        if load_saved:
-            try:
-                saved_wavelengths = star.load_property('norm_anchor_wavelengths', epoch_number, band)
-                # saved_wavelengths = saved_data['selected_wavelengths']
-                if saved_wavelengths is not None and len(saved_wavelengths) > 0:
-                    selected_wavelengths_tmp.clear()
-                    selected_wavelengths_tmp.extend(saved_wavelengths.tolist())
-                    print(f"Loaded saved anchor points for epoch {epoch_number}.")
-                else:
-                    print(f"No saved anchor points found for epoch {epoch_number}.")
-            except FileNotFoundError:
-                print(f"No saved anchor points file for epoch {epoch_number}.")
-            except Exception as e:
-                print(f"Error loading saved anchor points for epoch {epoch_number}: {e}")
 
     def update_plot():
         nonlocal scatter, selected_scatter, debug_text, kept_flux_means, kept_wavelength_means
@@ -429,7 +429,7 @@ def main():
     parser = argparse.ArgumentParser(description="Interactive normalization of spectra.")
     parser.add_argument('--star_names', nargs='+', default=None, help='List of star names to process')
     parser.add_argument('--overwrite_flag', action='store_true', default=False, help='Flag to overwrite existing files')
-    parser.add_argument('--backup_flag', action='store_true', default=False, help='Flag to create backups before overwriting')
+    parser.add_argument('--backup_flag', action='store_true', default=True, help='Flag to create backups before overwriting')
     parser.add_argument('--skip_flag', action='store_true', default=False, help='Flag to skip if results file already exist')
     parser.add_argument('--filter_flag', action='store_true', default=False, help='Flag to use the filtering function')
     parser.add_argument('--load_saved_flag', action='store_true', default=False, help='Flag to load saved anchor points if available')
