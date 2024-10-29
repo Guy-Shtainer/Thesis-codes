@@ -78,8 +78,8 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', batch_size=6
         # Load saved anchor points if load_saved is True
         if load_saved:
             try:
-                saved_data = star.load_property('norm_anchors_wavelengths', epoch_number, band)
-                saved_wavelengths = saved_data['selected_wavelengths']
+                saved_wavelengths = star.load_property('norm_anchor_wavelengths', epoch_number, band)
+                # saved_wavelengths = saved_data['selected_wavelengths']
                 if saved_wavelengths is not None and len(saved_wavelengths) > 0:
                     selected_wavelengths_tmp.clear()
                     selected_wavelengths_tmp.extend(saved_wavelengths.tolist())
@@ -429,7 +429,7 @@ def main():
     parser = argparse.ArgumentParser(description="Interactive normalization of spectra.")
     parser.add_argument('--star_names', nargs='+', default=None, help='List of star names to process')
     parser.add_argument('--overwrite_flag', action='store_true', default=False, help='Flag to overwrite existing files')
-    parser.add_argument('--backup_flag', action='store_true', default=True, help='Flag to create backups before overwriting')
+    parser.add_argument('--backup_flag', action='store_true', default=False, help='Flag to create backups before overwriting')
     parser.add_argument('--skip_flag', action='store_true', default=False, help='Flag to skip if results file already exist')
     parser.add_argument('--filter_flag', action='store_true', default=False, help='Flag to use the filtering function')
     parser.add_argument('--load_saved_flag', action='store_true', default=False, help='Flag to load saved anchor points if available')
