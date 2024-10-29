@@ -45,20 +45,9 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
     selected_wavelengths_tmp = []
     press_event = {'x': None, 'y': None, 'button': None}
 
-    # Initialize variables for nonlocal use in nested functions
-    scatter = None
-    selected_scatter = None
-
     # Initialize plot with three subplots
     fig, (ax1, ax_mid, ax2) = plt.subplots(3, 1, figsize=(10, 10))
     plt.subplots_adjust(bottom=0.2, hspace=0.4)
-
-    # Initialize line objects for the middle and bottom plots
-    line_data_mid = None
-    line_selected_points_mid = None
-    line_interpolated_flux = None
-    line_normalized_flux = None
-    line_hline = None
 
     # Load saved anchor points once at the beginning if load_saved is True
     if load_saved:
@@ -84,32 +73,20 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
         flux = fits_file.data['FLUX'][0]
 
     def update_plot():
-        nonlocal scatter, selected_scatter
-        nonlocal line_data_mid, line_selected_points_mid, line_interpolated_flux
-        nonlocal line_normalized_flux, line_hline
+        # Update the main plot with all data points and selected points
 
-        # Clear ax1 and reset line objects when changing epochs
+        # Save current axes limits
+        if ax1.has_data():
+            xlim = ax1.get_xlim()
+            ylim = ax1.get_ylim()
+        else:
+            xlim = None
+            ylim = None
+
         ax1.clear()
 
-        # Remove existing line objects from ax_mid and ax2
-        if line_data_mid is not None:
-            line_data_mid.remove()
-            line_data_mid = None
-        if line_selected_points_mid is not None:
-            line_selected_points_mid.remove()
-            line_selected_points_mid = None
-        if line_interpolated_flux is not None:
-            line_interpolated_flux.remove()
-            line_interpolated_flux = None
-        if line_normalized_flux is not None:
-            line_normalized_flux.remove()
-            line_normalized_flux = None
-        if line_hline is not None:
-            line_hline.remove()
-            line_hline = None
-
         # Plot all data points on ax1
-        scatter, = ax1.plot(wavelength, flux, '.', color='gray', markersize=2, label='Data')
+        ax1.plot(wavelength, flux, '.', color='gray', markersize=2, label='Data')
 
         # Get fluxes at selected wavelengths
         if selected_wavelengths_tmp:
@@ -117,11 +94,19 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
         else:
             selected_fluxes_current_epoch = []
 
-        selected_scatter, = ax1.plot(selected_wavelengths_tmp, selected_fluxes_current_epoch, 'o', color='red', markersize=5, label='Selected Points')
+        ax1.plot(selected_wavelengths_tmp, selected_fluxes_current_epoch, 'o', color='red', markersize=5, label='Selected Points')
 
         ax1.set_ylabel('Flux')
         ax1.set_title(f'Interactive Normalization - Star: {star.star_name}, Epoch: {epoch_numbers[current_epoch_idx]}, Band: {band}')
         ax1.legend()
+
+        # Restore axes limits if they were set
+        if xlim is not None and ylim is not None:
+            ax1.set_xlim(xlim)
+            ax1.set_ylim(ylim)
+        else:
+            ax1.relim()
+            ax1.autoscale_view()
 
         # Plot data and interpolated flux on ax_mid
         plot_interpolated_flux()
@@ -132,81 +117,95 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
         fig.canvas.draw_idle()
 
     def plot_interpolated_flux():
-        nonlocal line_data_mid, line_selected_points_mid, line_interpolated_flux
-        if len(selected_wavelengths_tmp) < 2:
-            ax_mid.clear()
-            ax_mid.set_title("Not enough points selected for interpolation.")
-            ax_mid.set_ylabel('Flux')
-            return
-
-        selected_fluxes_current_epoch = np.interp(selected_wavelengths_tmp, wavelength, flux)
-
-        # Perform linear interpolation between selected points
-        sorted_indices = np.argsort(selected_wavelengths_tmp)
-        selected_wavelengths_sorted = np.array(selected_wavelengths_tmp)[sorted_indices]
-        selected_fluxes_sorted = np.array(selected_fluxes_current_epoch)[sorted_indices]
-
-        interpolated_flux = np.interp(wavelength, selected_wavelengths_sorted, selected_fluxes_sorted)
-
-        # Update or create line objects
-        if line_data_mid is None:
-            line_data_mid, = ax_mid.plot(wavelength, flux, '.', color='gray', markersize=2, label='Data')
+        # Save current axes limits
+        if ax_mid.has_data():
+            xlim = ax_mid.get_xlim()
+            ylim = ax_mid.get_ylim()
         else:
-            line_data_mid.set_data(wavelength, flux)
+            xlim = None
+            ylim = None
 
-        if line_selected_points_mid is None:
-            line_selected_points_mid, = ax_mid.plot(selected_wavelengths_tmp, selected_fluxes_current_epoch, 'o', color='red', markersize=5, label='Selected Points')
-        else:
-            line_selected_points_mid.set_data(selected_wavelengths_tmp, selected_fluxes_current_epoch)
+        ax_mid.clear()
 
-        if line_interpolated_flux is None:
-            line_interpolated_flux, = ax_mid.plot(wavelength, interpolated_flux, '-', color='green', label='Interpolated Flux')
-        else:
-            line_interpolated_flux.set_data(wavelength, interpolated_flux)
+        # Always plot the data points
+        ax_mid.plot(wavelength, flux, '.', color='gray', markersize=2, label='Data')
 
-        # Ensure labels and titles are set only once
-        if not ax_mid.get_ylabel():
-            ax_mid.set_ylabel('Flux')
-        if not ax_mid.get_title():
+        if len(selected_wavelengths_tmp) >= 2:
+            selected_fluxes_current_epoch = np.interp(selected_wavelengths_tmp, wavelength, flux)
+
+            # Perform linear interpolation between selected points
+            sorted_indices = np.argsort(selected_wavelengths_tmp)
+            selected_wavelengths_sorted = np.array(selected_wavelengths_tmp)[sorted_indices]
+            selected_fluxes_sorted = np.array(selected_fluxes_current_epoch)[sorted_indices]
+
+            interpolated_flux = np.interp(wavelength, selected_wavelengths_sorted, selected_fluxes_sorted)
+
+            # Plot interpolated flux
+            ax_mid.plot(wavelength, interpolated_flux, '-', color='green', label='Interpolated Flux')
+
+            # Plot selected points
+            ax_mid.plot(selected_wavelengths_tmp, selected_fluxes_current_epoch, 'o', color='red', markersize=5, label='Selected Points')
+
             ax_mid.set_title(f'Interpolation - Epoch: {epoch_numbers[current_epoch_idx]}')
-        if not ax_mid.get_legend():
-            ax_mid.legend()
+        else:
+            ax_mid.set_title("Not enough points selected for interpolation.")
+
+        ax_mid.set_ylabel('Flux')
+        ax_mid.legend()
+
+        # Restore axes limits if they were set
+        if xlim is not None and ylim is not None:
+            ax_mid.set_xlim(xlim)
+            ax_mid.set_ylim(ylim)
+        else:
+            ax_mid.relim()
+            ax_mid.autoscale_view()
 
     def plot_normalized_flux():
-        nonlocal line_normalized_flux, line_hline
-        if len(selected_wavelengths_tmp) < 2:
-            ax2.clear()
-            ax2.set_title("Not enough points selected for interpolation.")
-            ax2.set_xlabel('Wavelength')
-            ax2.set_ylabel('Normalized Flux')
-            return
-
-        selected_fluxes_current_epoch = np.interp(selected_wavelengths_tmp, wavelength, flux)
-
-        # Perform linear interpolation between selected points
-        sorted_indices = np.argsort(selected_wavelengths_tmp)
-        selected_wavelengths_sorted = np.array(selected_wavelengths_tmp)[sorted_indices]
-        selected_fluxes_sorted = np.array(selected_fluxes_current_epoch)[sorted_indices]
-
-        interpolated_flux = np.interp(wavelength, selected_wavelengths_sorted, selected_fluxes_sorted)
-        normalized_flux = flux / interpolated_flux
-
-        if line_normalized_flux is None:
-            line_normalized_flux, = ax2.plot(wavelength, normalized_flux, '-', color='blue', label='Normalized Flux')
+        # Save current axes limits
+        if ax2.has_data():
+            xlim = ax2.get_xlim()
+            ylim = ax2.get_ylim()
         else:
-            line_normalized_flux.set_data(wavelength, normalized_flux)
+            xlim = None
+            ylim = None
 
-        if line_hline is None:
-            line_hline = ax2.axhline(y=1, color='red', linestyle='--', label='y=1 (Interpolated Flux)')
+        ax2.clear()
 
-        if not ax2.get_xlabel():
-            ax2.set_xlabel('Wavelength')
-        if not ax2.get_ylabel():
-            ax2.set_ylabel('Normalized Flux')
-        if not ax2.get_title():
+        if len(selected_wavelengths_tmp) >= 2:
+            selected_fluxes_current_epoch = np.interp(selected_wavelengths_tmp, wavelength, flux)
+
+            # Perform linear interpolation between selected points
+            sorted_indices = np.argsort(selected_wavelengths_tmp)
+            selected_wavelengths_sorted = np.array(selected_wavelengths_tmp)[sorted_indices]
+            selected_fluxes_sorted = np.array(selected_fluxes_current_epoch)[sorted_indices]
+
+            interpolated_flux = np.interp(wavelength, selected_wavelengths_sorted, selected_fluxes_sorted)
+            normalized_flux = flux / interpolated_flux
+
+            # Plot normalized flux
+            ax2.plot(wavelength, normalized_flux, '-', color='blue', label='Normalized Flux')
+
+            # Plot y=1 line
+            ax2.axhline(y=1, color='red', linestyle='--', label='y=1 (Interpolated Flux)')
+
             ax2.set_title(f'Normalized Flux - Epoch: {epoch_numbers[current_epoch_idx]}')
-        if not ax2.get_legend():
-            ax2.legend()
+        else:
+            # Not enough points selected; plot raw flux normalized by its maximum value
+            ax2.plot(wavelength, flux / np.max(flux), '-', color='blue', label='Normalized Flux (raw)')
+            ax2.set_title("Not enough points selected for interpolation.")
+
+        ax2.set_xlabel('Wavelength')
+        ax2.set_ylabel('Normalized Flux')
+        ax2.legend()
+
+        # Restore axes limits if they were set
+        if xlim is not None and ylim is not None:
+            ax2.set_xlim(xlim)
+            ax2.set_ylim(ylim)
+        else:
+            ax2.relim()
+            ax2.autoscale_view()
 
     # Event handling functions remain unchanged
 
@@ -238,24 +237,14 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
                 if wl not in selected_wavelengths_tmp:
                     selected_wavelengths_tmp.append(wl)
                     selected_wavelengths_tmp.sort()
-                    update_selected_scatter()
+                    update_plot()
         elif press_event['button'] == 3:  # Right click to delete points
             if selected_wavelengths_tmp:
                 idx = np.abs(np.array(selected_wavelengths_tmp) - press_event['x']).argmin()
                 x_threshold = (ax1.get_xlim()[1] - ax1.get_xlim()[0]) * 0.005
                 if np.abs(selected_wavelengths_tmp[idx] - press_event['x']) < x_threshold:
                     del selected_wavelengths_tmp[idx]
-                    update_selected_scatter()
-
-    def update_selected_scatter():
-        if selected_wavelengths_tmp:
-            selected_fluxes_current_epoch = np.interp(selected_wavelengths_tmp, wavelength, flux)
-        else:
-            selected_fluxes_current_epoch = []
-        selected_scatter.set_data(selected_wavelengths_tmp, selected_fluxes_current_epoch)
-        plot_interpolated_flux()
-        plot_normalized_flux()
-        fig.canvas.draw_idle()
+                    update_plot()
 
     # Connect events
     fig.canvas.mpl_connect('button_press_event', onpress)
@@ -331,7 +320,6 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
         gc.collect()
 
     print('Finished processing all epochs.')
-
 
 
 def filter_f(wavelength, flux, batch_size=6, big_batch_size=10):
