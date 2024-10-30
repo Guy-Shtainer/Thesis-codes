@@ -14,6 +14,12 @@ import specs
 import gc
 
 
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.widgets import Button
+import threading
+import gc
+
 def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=None,
                               overwrite=False, backup=True, load_saved=False):
     """
@@ -28,23 +34,13 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
         backup (bool): Whether to create a backup if overwriting. Default is True.
         load_saved (bool): Whether to load saved anchor points if available. Default is False.
     """
-    import threading
-    import matplotlib.pyplot as plt
-    from matplotlib.widgets import Button
-    import numpy as np
-    import gc
-
     proceed_event = threading.Event()
-    skip_to_next_star = False  # Flag to skip to next star without saving
     current_epoch_idx = 0  # To keep track of the current epoch index
+    navigation_choice = "finish"  # Default navigation choice if no button is pressed
 
     # Initialize variables to store data
     wavelength = None
     flux = None
-
-    first_normalization = True
-
-    # Variables to store the shared anchor points across epochs
     selected_wavelengths_tmp = []
     press_event = {'x': None, 'y': None, 'button': None}
 
@@ -70,144 +66,58 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
     def load_data():
         nonlocal wavelength, flux
         epoch_number = epoch_numbers[current_epoch_idx]
-        # Load observation for the current epoch and band
         fits_file = star.load_observation(epoch_number, band)
         wavelength = fits_file.data['WAVE'][0]
         flux = fits_file.data['FLUX'][0]
 
     def update_plot(new_epoch=False):
-        # Update the main plot with all data points and selected points
-
-        # Save current axes limits
-        if ax1.has_data():
-            xlim = ax1.get_xlim()
-            ylim = ax1.get_ylim()
-        else:
-            xlim = None
-            ylim = None
-
         ax1.clear()
-
-        # Plot all data points on ax1
         ax1.plot(wavelength, flux, '.', color='gray', markersize=2, label='Data')
-
-        # Get fluxes at selected wavelengths
         if selected_wavelengths_tmp:
             selected_fluxes_current_epoch = np.interp(selected_wavelengths_tmp, wavelength, flux)
-        else:
-            selected_fluxes_current_epoch = []
-
-        ax1.plot(selected_wavelengths_tmp, selected_fluxes_current_epoch, 'o', color='red', markersize=5, label='Selected Points')
-
+            ax1.plot(selected_wavelengths_tmp, selected_fluxes_current_epoch, 'o', color='red', markersize=5, label='Selected Points')
         ax1.set_ylabel('Flux')
         ax1.set_title(f'Interactive Normalization - Star: {star.star_name}, Epoch: {epoch_numbers[current_epoch_idx]}, Band: {band}')
         ax1.legend()
 
-        # Restore axes limits if they were set
-        if xlim is not None and ylim is not None:
-            ax1.set_xlim(xlim)
-            ax1.set_ylim(ylim)
-        else:
-            ax1.relim()
-            ax1.autoscale_view()
-
-        # Plot data and interpolated flux on ax_mid
         plot_interpolated_flux()
-
-        # Automatically update the normalization plot
         plot_normalized_flux(new_epoch)
-
         fig.canvas.draw_idle()
 
     def plot_interpolated_flux():
-        # Save current axes limits
-        if ax_mid.has_data():
-            xlim = ax_mid.get_xlim()
-            ylim = ax_mid.get_ylim()
-        else:
-            xlim = None
-            ylim = None
-
         ax_mid.clear()
-
-        # Always plot the data points
         ax_mid.plot(wavelength, flux, '.', color='gray', markersize=2, label='Data')
-
         if len(selected_wavelengths_tmp) >= 2:
             selected_fluxes_current_epoch = np.interp(selected_wavelengths_tmp, wavelength, flux)
-
-            # Perform linear interpolation between selected points
             sorted_indices = np.argsort(selected_wavelengths_tmp)
             selected_wavelengths_sorted = np.array(selected_wavelengths_tmp)[sorted_indices]
             selected_fluxes_sorted = np.array(selected_fluxes_current_epoch)[sorted_indices]
-
             interpolated_flux = np.interp(wavelength, selected_wavelengths_sorted, selected_fluxes_sorted)
-
-            # Plot interpolated flux
             ax_mid.plot(wavelength, interpolated_flux, '-', color='green', label='Interpolated Flux')
-
-            # Plot selected points
             ax_mid.plot(selected_wavelengths_tmp, selected_fluxes_current_epoch, 'o', color='red', markersize=5, label='Selected Points')
-
             ax_mid.set_title(f'Interpolation - Epoch: {epoch_numbers[current_epoch_idx]}')
         else:
             ax_mid.set_title("Not enough points selected for interpolation.")
-
         ax_mid.set_ylabel('Flux')
         ax_mid.legend()
 
-        # Restore axes limits if they were set
-        if xlim is not None and ylim is not None:
-            ax_mid.set_xlim(xlim)
-            ax_mid.set_ylim(ylim)
-        else:
-            ax_mid.relim()
-            ax_mid.autoscale_view()
-
     def plot_normalized_flux(new_epoch=False):
-        nonlocal first_normalization
-        # Save current axes limits
-        if ax2.has_data():
-            xlim = ax2.get_xlim()
-            ylim = ax2.get_ylim()
-        else:
-            xlim = None
-            ylim = None
-
         ax2.clear()
-
         if len(selected_wavelengths_tmp) >= 2:
             selected_fluxes_current_epoch = np.interp(selected_wavelengths_tmp, wavelength, flux)
-
-            # Perform linear interpolation between selected points
             sorted_indices = np.argsort(selected_wavelengths_tmp)
             selected_wavelengths_sorted = np.array(selected_wavelengths_tmp)[sorted_indices]
             selected_fluxes_sorted = np.array(selected_fluxes_current_epoch)[sorted_indices]
-
             interpolated_flux = np.interp(wavelength, selected_wavelengths_sorted, selected_fluxes_sorted)
             normalized_flux = flux / interpolated_flux
-
             ax2.plot(wavelength, normalized_flux, '-', color='blue', label='Normalized Flux')
             ax2.axhline(y=1, color='red', linestyle='--', label='y=1 (Interpolated Flux)')
             ax2.set_title(f'Normalized Flux - Epoch: {epoch_numbers[current_epoch_idx]}')
         else:
-            interpolated_flux = np.interp(wavelength, np.take(wavelength, [50, 1500, -50]), np.take(flux, [50, 1500, -50]))
-            normalized_flux = flux / interpolated_flux
-            ax2.plot(wavelength, normalized_flux, '-', color='blue', label='Normalized Flux')
-            ax2.axhline(y=1, color='red', linestyle='--', label='y=1 (Interpolated Flux)')
             ax2.set_title("Not enough points selected for interpolation.")
-
         ax2.set_xlabel('Wavelength')
         ax2.set_ylabel('Normalized Flux')
         ax2.legend()
-
-        # Restore axes limits if they were set
-        if xlim is not None and ylim is not None:
-            ax2.set_xlim(xlim)
-            ax2.set_ylim(ylim)
-        else:
-            ax2.relim()
-            ax2.autoscale_view()
 
     def onpress(event):
         if event.inaxes != ax1:
@@ -229,12 +139,9 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
     def onclick(press_event):
         if press_event['x'] is None or press_event['y'] is None:
             return
-    
-        # Define thresholds based on current axes limits
         x_threshold = (ax1.get_xlim()[1] - ax1.get_xlim()[0]) * 0.05
         y_threshold = (ax1.get_ylim()[1] - ax1.get_ylim()[0]) * 0.05
-    
-        if press_event['button'] == 1:  # Left click to add points
+        if press_event['button'] == 1:
             x_diff = np.abs(wavelength - press_event['x'])
             y_diff = np.abs(flux - press_event['y'])
             within_threshold = (x_diff < x_threshold) & (y_diff < y_threshold)
@@ -250,7 +157,7 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
                 selected_wavelengths_tmp.append(wl)
                 selected_wavelengths_tmp.sort()
                 update_plot()
-        elif press_event['button'] == 3:  # Right click to delete points
+        elif press_event['button'] == 3:
             if not selected_wavelengths_tmp:
                 return
             selected_wavelengths = np.array(selected_wavelengths_tmp)
@@ -259,6 +166,7 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
             y_diff = np.abs(selected_fluxes - press_event['y'])
             within_threshold = (x_diff < x_threshold) & (y_diff < y_threshold)
             if not np.any(within_threshold):
+                print(f'Found no near point')
                 return
             candidate_wavelengths = selected_wavelengths[within_threshold]
             candidate_fluxes = selected_fluxes[within_threshold]
@@ -271,18 +179,7 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
     fig.canvas.mpl_connect('button_press_event', onpress)
     fig.canvas.mpl_connect('button_release_event', onrelease)
 
-    ax_next_star = plt.axes([0.48, 0.02, 0.1, 0.05])
-    btn_next_star = Button(ax_next_star, 'Next Star')
-
-    def next_star(event):
-        nonlocal skip_to_next_star
-        skip_to_next_star = True
-        proceed_event.set()
-        plt.close(fig)
-        print("Skipping to next star...")
-
-    btn_next_star.on_clicked(next_star)
-
+    # Epoch navigation buttons
     ax_next_epoch = plt.axes([0.7, 0.02, 0.1, 0.05])
     btn_next_epoch = Button(ax_next_epoch, 'Next Epoch')
 
@@ -311,31 +208,38 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
 
     btn_prev_epoch.on_clicked(prev_epoch)
 
-    ax_finish = plt.axes([0.81, 0.02, 0.1, 0.05])
-    btn_finish = Button(ax_finish, 'Finish and Save')
+    # Star navigation buttons
+    ax_next_star = plt.axes([0.47, 0.02, 0.1, 0.05])
+    btn_next_star = Button(ax_next_star, 'Next Star')
 
-    def finish(event):
+    def next_star(event):
+        nonlocal navigation_choice
+        navigation_choice = "next"
         proceed_event.set()
         plt.close(fig)
-        print('Finished normalization.')
 
-        for epoch_number in epoch_numbers:
-            if len(selected_wavelengths_tmp) < 2:
-                print(f"Not enough points selected for interpolation in epoch {epoch_number}. Skipping.")
-                continue
-            fits_file = star.load_observation(epoch_number, band)
-            wavelength_epoch = fits_file.data['WAVE'][0]
-            flux_epoch = fits_file.data['FLUX'][0]
-            selected_fluxes_epoch = np.interp(selected_wavelengths_tmp, wavelength_epoch, flux_epoch)
-            sorted_indices = np.argsort(selected_wavelengths_tmp)
-            selected_wavelengths_epoch = np.array(selected_wavelengths_tmp)[sorted_indices]
-            selected_fluxes_epoch = selected_fluxes_epoch[sorted_indices]
-            interpolated_flux_epoch = np.interp(wavelength_epoch, selected_wavelengths_epoch, selected_fluxes_epoch)
-            normalized_flux = flux_epoch / interpolated_flux_epoch
-            star.save_property('norm_anchor_wavelengths', selected_wavelengths_epoch, epoch_number, band, overwrite=overwrite, backup=backup)
-            star.save_property('normalized_flux', {'wavelengths': wavelength_epoch, 'normalized_flux': normalized_flux}, epoch_number, band, overwrite=overwrite, backup=backup)
-            star.save_property('interpolated_flux', {'wavelengths': wavelength_epoch,  'interpolated_flux': interpolated_flux_epoch}, epoch_number, band, overwrite=overwrite, backup=backup)
-            print(f"Saved normalization results for epoch {epoch_number}")
+    btn_next_star.on_clicked(next_star)
+
+    ax_prev_star = plt.axes([0.36, 0.02, 0.1, 0.05])
+    btn_prev_star = Button(ax_prev_star, 'Previous Star')
+
+    def prev_star(event):
+        nonlocal navigation_choice
+        navigation_choice = "previous"
+        proceed_event.set()
+        plt.close(fig)
+
+    btn_prev_star.on_clicked(prev_star)
+
+    # Finish button
+    ax_finish = plt.axes([0.81, 0.02, 0.1, 0.05])
+    btn_finish = Button(ax_finish, 'Finish')
+
+    def finish(event):
+        nonlocal navigation_choice
+        navigation_choice = "finish"
+        proceed_event.set()
+        plt.close(fig)
 
     btn_finish.on_clicked(finish)
 
@@ -347,9 +251,9 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
         proceed_event.wait()
         gc.collect()
 
-    print('Finished processing all epochs for this star.')
+    print(f'Chosen navigation: {navigation_choice}')
+    return navigation_choice
 
-    return skip_to_next_star
 
 
 
@@ -447,10 +351,15 @@ def main():
     obs = obsm()
     filter_func = filter_f if args.filter_flag else None
 
-    for star_name in star_names:
+    current_star_idx = 0  # Track current star index
+
+    while current_star_idx < len(star_names):
+        star_name = star_names[current_star_idx]
         print(f"Processing star: {star_name}")
+
         if star_name not in obs_file_names:
             print(f"Star {star_name} not found in obs_file_names.")
+            current_star_idx += 1
             continue
 
         star = obs.load_star_instance(star_name)
@@ -472,19 +381,24 @@ def main():
                     break
             if all_exist:
                 print(f"Skipping star: {star_name} as results already exist for all epochs.")
+                current_star_idx += 1
                 continue
 
+        # Call the interactive normalization function with navigation options
         print(f"Starting interactive normalization for {star_name}")
-        skip_to_next_star = interactive_normalization(
+        nav_choice = interactive_normalization(
             star, epoch_nums, band=band, filter_func=filter_func,
             overwrite=overwrite_flag, backup=backup_flag, load_saved=load_saved_flag
         )
-        
-        if skip_to_next_star:
-            print(f"Skipped saving and moving to next star for {star_name}")
-            continue
 
-        print(f"Finished processing {star_name}")
+        # Adjust the index based on user's navigation choice
+        if nav_choice == "next":
+            current_star_idx += 1
+        elif nav_choice == "previous" and current_star_idx > 0:
+            current_star_idx -= 1
+        else:
+            # Default is to go to the next star if "finish" or invalid option
+            current_star_idx += 1
 
     print("All stars have been processed.")
 
