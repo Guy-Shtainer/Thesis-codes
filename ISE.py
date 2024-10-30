@@ -35,6 +35,7 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
     import gc
 
     proceed_event = threading.Event()
+    skip_to_next_star = False  # Flag to skip to next star without saving
     current_epoch_idx = 0  # To keep track of the current epoch index
 
     # Initialize variables to store data
@@ -74,7 +75,7 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
         wavelength = fits_file.data['WAVE'][0]
         flux = fits_file.data['FLUX'][0]
 
-    def update_plot(new_epoch = False):
+    def update_plot(new_epoch=False):
         # Update the main plot with all data points and selected points
 
         # Save current axes limits
@@ -163,7 +164,7 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
             ax_mid.relim()
             ax_mid.autoscale_view()
 
-    def plot_normalized_flux(new_epoch = False):
+    def plot_normalized_flux(new_epoch=False):
         nonlocal first_normalization
         # Save current axes limits
         if ax2.has_data():
@@ -186,34 +187,14 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
             interpolated_flux = np.interp(wavelength, selected_wavelengths_sorted, selected_fluxes_sorted)
             normalized_flux = flux / interpolated_flux
 
-            # if first_normalization:
-            #     print('CLEANED!')
-            #     ax2.clear()
-            #     first_normalization = False
-
-            # Plot normalized flux
             ax2.plot(wavelength, normalized_flux, '-', color='blue', label='Normalized Flux')
-
-            # Plot y=1 line
             ax2.axhline(y=1, color='red', linestyle='--', label='y=1 (Interpolated Flux)')
-            # if new_epoch:
-            #     ax2.autoscale_view()
-
             ax2.set_title(f'Normalized Flux - Epoch: {epoch_numbers[current_epoch_idx]}')
         else:
-            interpolated_flux = np.interp(wavelength, np.take(wavelength,[50,1500,-50]), np.take(flux,[50,1500,-50]))
+            interpolated_flux = np.interp(wavelength, np.take(wavelength, [50, 1500, -50]), np.take(flux, [50, 1500, -50]))
             normalized_flux = flux / interpolated_flux
-            # Plot normalized flux
             ax2.plot(wavelength, normalized_flux, '-', color='blue', label='Normalized Flux')
-
-            # Plot y=1 line
             ax2.axhline(y=1, color='red', linestyle='--', label='y=1 (Interpolated Flux)')
-            # first_normalization = True
-            
-            # Not enough points selected; plot raw flux normalized by its maximum value
-            # ax2.plot(wavelength, flux / np.max(flux), '-', color='blue', label='Normalized Flux (raw)')
-            # ax2.set_ylim(-5,5)
-            # ax2.axhline(y=1, color='red', linestyle='--', label='y=1 (Interpolated Flux)')
             ax2.set_title("Not enough points selected for interpolation.")
 
         ax2.set_xlabel('Wavelength')
@@ -227,8 +208,6 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
         else:
             ax2.relim()
             ax2.autoscale_view()
-
-    # Event handling functions remain unchanged
 
     def onpress(event):
         if event.inaxes != ax1:
@@ -256,28 +235,16 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
         y_threshold = (ax1.get_ylim()[1] - ax1.get_ylim()[0]) * 0.05
     
         if press_event['button'] == 1:  # Left click to add points
-            # Find indices of points within thresholds
             x_diff = np.abs(wavelength - press_event['x'])
             y_diff = np.abs(flux - press_event['y'])
             within_threshold = (x_diff < x_threshold) & (y_diff < y_threshold)
-    
-            # If no points are within thresholds, do nothing
             if not np.any(within_threshold):
                 return
-    
-            # Extract candidate points within thresholds
             candidate_wavelengths = wavelength[within_threshold]
             candidate_fluxes = flux[within_threshold]
-    
-            # Calculate Euclidean distances
             distances = np.hypot(candidate_wavelengths - press_event['x'], candidate_fluxes - press_event['y'])
-    
-            # Find the index of the closest point
             min_idx = np.argmin(distances)
-    
-            # Get the actual index in the original arrays
             idx = np.where(within_threshold)[0][min_idx]
-    
             wl = wavelength[idx]
             if wl not in selected_wavelengths_tmp:
                 selected_wavelengths_tmp.append(wl)
@@ -286,42 +253,35 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
         elif press_event['button'] == 3:  # Right click to delete points
             if not selected_wavelengths_tmp:
                 return
-    
             selected_wavelengths = np.array(selected_wavelengths_tmp)
             selected_fluxes = np.interp(selected_wavelengths, wavelength, flux)
-    
-            # Find indices of selected points within thresholds
             x_diff = np.abs(selected_wavelengths - press_event['x'])
             y_diff = np.abs(selected_fluxes - press_event['y'])
             within_threshold = (x_diff < x_threshold) & (y_diff < y_threshold)
-    
-            # If no selected points are within thresholds, do nothing
             if not np.any(within_threshold):
-                print(f'Found no near point')
                 return
-    
-            # Extract candidate selected points within thresholds
             candidate_wavelengths = selected_wavelengths[within_threshold]
             candidate_fluxes = selected_fluxes[within_threshold]
-    
-            # Calculate Euclidean distances
             distances = np.hypot(candidate_wavelengths - press_event['x'], candidate_fluxes - press_event['y'])
-    
-            # Find the index of the closest point
             min_idx = np.argmin(distances)
-    
-            # Get the actual index in the selected_wavelengths_tmp list
             idx = np.where(within_threshold)[0][min_idx]
-    
             del selected_wavelengths_tmp[idx]
             update_plot()
 
-
-    # Connect events
     fig.canvas.mpl_connect('button_press_event', onpress)
     fig.canvas.mpl_connect('button_release_event', onrelease)
 
-    # Buttons for navigation and saving
+    ax_next_star = plt.axes([0.48, 0.02, 0.1, 0.05])
+    btn_next_star = Button(ax_next_star, 'Next Star')
+
+    def next_star(event):
+        nonlocal skip_to_next_star
+        skip_to_next_star = True
+        proceed_event.set()
+        plt.close(fig)
+        print("Skipping to next star...")
+
+    btn_next_star.on_clicked(next_star)
 
     ax_next_epoch = plt.axes([0.7, 0.02, 0.1, 0.05])
     btn_next_epoch = Button(ax_next_epoch, 'Next Epoch')
@@ -359,7 +319,6 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
         plt.close(fig)
         print('Finished normalization.')
 
-        # Save normalization results for all epochs
         for epoch_number in epoch_numbers:
             if len(selected_wavelengths_tmp) < 2:
                 print(f"Not enough points selected for interpolation in epoch {epoch_number}. Skipping.")
@@ -380,17 +339,18 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
 
     btn_finish.on_clicked(finish)
 
-    # Show the plot
     load_data()
     update_plot()
     plt.show()
 
-    # Wait for 'Finish and Save' button to be clicked
     while not proceed_event.is_set():
         proceed_event.wait()
         gc.collect()
 
-    print('Finished processing all epochs.')
+    print('Finished processing all epochs for this star.')
+
+    return skip_to_next_star
+
 
 
 def filter_f(wavelength, flux, batch_size=6, big_batch_size=10):
@@ -464,6 +424,11 @@ def filter_f(wavelength, flux, batch_size=6, big_batch_size=10):
     return final_wavelengths, final_fluxes
 
 def main():
+    import argparse
+    import re
+    import specs
+    from ObservationClass import ObservationManager as obsm
+
     parser = argparse.ArgumentParser(description="Interactive normalization of spectra.")
     parser.add_argument('--star_names', nargs='+', default=None, help='List of star names to process')
     parser.add_argument('--overwrite_flag', action='store_true', default=False, help='Flag to overwrite existing files')
@@ -487,6 +452,7 @@ def main():
         if star_name not in obs_file_names:
             print(f"Star {star_name} not found in obs_file_names.")
             continue
+
         star = obs.load_star_instance(star_name)
         epochs_dict = obs_file_names[star_name]
         epoch_nums = [int(re.findall(r'\d+\.\d+|\d+', epoch)[0]) for epoch in epochs_dict.keys()]
@@ -497,7 +463,7 @@ def main():
             all_exist = True
             for epoch_num in epoch_nums:
                 try:
-                    result = star.load_property('norm_anchors_wavelengths', epoch_num, band)
+                    result = star.load_property('norm_anchor_wavelengths', epoch_num, band)
                     if result is None:
                         all_exist = False
                         break
@@ -509,8 +475,15 @@ def main():
                 continue
 
         print(f"Starting interactive normalization for {star_name}")
-        interactive_normalization(star, epoch_nums, band=band, filter_func=filter_func,
-                                  overwrite=overwrite_flag, backup=backup_flag, load_saved=load_saved_flag)
+        skip_to_next_star = interactive_normalization(
+            star, epoch_nums, band=band, filter_func=filter_func,
+            overwrite=overwrite_flag, backup=backup_flag, load_saved=load_saved_flag
+        )
+        
+        if skip_to_next_star:
+            print(f"Skipped saving and moving to next star for {star_name}")
+            continue
+
         print(f"Finished processing {star_name}")
 
     print("All stars have been processed.")
