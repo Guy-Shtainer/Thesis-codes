@@ -11,6 +11,7 @@ from IPython.display import display
 from astropy.io import fits
 import specs
 from FitsClass import FITSFile as myfits 
+from CCF import CCFclass
 import plot as p
 from threading import Thread
 import multiprocess
@@ -1153,7 +1154,8 @@ class Star:
                     raise FileNotFoundError("One or more FITS files for the specified epoch do not exist.")
 
                 # Create the COMBINED folder if it doesn't exist
-                combined_folder = os.path.join(os.path.dirname(os.path.dirname(self.get_file_path(epoch_num, band='NIR'))), 'COMBINED')
+                # combined_folder = os.path.join(os.path.dirname(os.path.dirname(self.get_file_path(epoch_num, band='NIR'))), 'COMBINED')
+                combined_folder = os.path.join(os.path.dirname(os.path.dirname(self.get_file_path(epoch_num, band='NIR'))), 'COMBINED2')
                 os.makedirs(combined_folder, exist_ok=True)
 
                 # Extract WAVE, FLUX, and SNR data
@@ -1170,12 +1172,19 @@ class Star:
                 uvb_snr = uvb_fits.data['SNR'][0]
                 uvb_red_flux = uvb_fits.data['FLUX_REDUCED'][0]
 
-                # Combine the data
-                combined_wave, combined_flux, combined_snr, combined_flux_reduced = self._combine_spectra(
+                # # Combine the data
+                # combined_wave, combined_flux, combined_snr, combined_flux_reduced = self._combine_spectra(
+                #     [uvb_wave, vis_wave, nir_wave],
+                #     [uvb_flux, vis_flux, nir_flux],
+                #     [uvb_snr, vis_snr, nir_snr],
+                #     [nir_red_flux,vis_red_flux,uvb_red_flux]
+                # )
+
+                combined_wave, combined_flux, combined_snr, combined_flux_reduced = self._combine_spectra_tmp(
                     [uvb_wave, vis_wave, nir_wave],
                     [uvb_flux, vis_flux, nir_flux],
                     [uvb_snr, vis_snr, nir_snr],
-                    [nir_red_flux,vis_red_flux,uvb_red_flux]
+                    [uvb_red_flux,vis_red_flux,nir_red_flux]
                 )
 
                 combined_data = {
@@ -1197,12 +1206,208 @@ class Star:
             except FileNotFoundError as e:
                 print(f'Error: {e}')
             except Exception as e:
-                print(f'An unexpected error occurred: {e}')
+                print(f'An unexpected error occurred1: {e}')
         except Exception as e:
-            print(f'An unexpected error occurred: {e}')
+            print(f'An unexpected error occurred2: {e}')
 
 ########################################                                   ########################################
 
+    def _combine_spectra_tmp(self, wave_list, flux_list, snr_list, flux_reduced_list):
+        """
+        Combine multiple spectra into a single spectrum by handling overlaps with different sampling,
+        aligning mean fluxes before combination, and combining fluxes using the weighted SNR method.
+    
+        Parameters:
+        wave_list : list of numpy arrays
+            List containing wavelength arrays from different spectra.
+        flux_list : list of numpy arrays
+            List containing flux arrays corresponding to the wavelengths.
+        snr_list : list of numpy arrays
+            List containing SNR arrays corresponding to the wavelengths.
+        flux_reduced_list : list of numpy arrays
+            List containing FLUX_REDUCED arrays corresponding to the wavelengths.
+    
+        Returns:
+        combined_wave : numpy array
+            Combined wavelength array.
+        combined_flux : numpy array
+            Combined flux array.
+        combined_snr : numpy array
+            Combined SNR array.
+        combined_flux_reduced: numpy array
+            Combined FLUX_REDUCED array.
+        """
+    
+        import numpy as np
+    
+        # Initialize the combined spectrum with the first spectrum
+        combined_wave = wave_list[0]
+        combined_flux = flux_list[0]
+        combined_snr = snr_list[0]
+        combined_flux_reduced = flux_reduced_list[0]
+    
+        # Loop over the rest of the spectra
+        for idx in range(1, len(wave_list)):
+            wave_current = wave_list[idx]
+            flux_current = flux_list[idx]
+            snr_current = snr_list[idx]
+            flux_reduced_current = flux_reduced_list[idx]
+    
+            # Find overlap between combined_wave and wave_current
+            overlap_start = max(combined_wave[0], wave_current[0])
+            overlap_end = min(combined_wave[-1], wave_current[-1])
+    
+            if overlap_start < overlap_end:
+                # There is an overlap
+                # Get indices for the overlapping region in both spectra
+                combined_overlap_indices = np.where((combined_wave >= overlap_start) & (combined_wave <= overlap_end))[0]
+                current_overlap_indices = np.where((wave_current >= overlap_start) & (wave_current <= overlap_end))[0]
+
+                # Determine which spectrum has fewer points in the overlap
+                if len(combined_overlap_indices) >= len(current_overlap_indices):
+                    # Interpolate current spectrum onto combined spectrum's wavelength grid
+                    finer_wave = combined_wave[combined_overlap_indices]
+                    coarser_wave = wave_current[current_overlap_indices]
+                    flux_coarser = flux_current[current_overlap_indices]
+                    snr_coarser = snr_current[current_overlap_indices]
+                    flux_reduced_coarser = flux_reduced_current[current_overlap_indices]
+    
+                    # Interpolate coarser spectrum onto finer_wave
+                    interp_flux = np.interp(finer_wave, coarser_wave, flux_coarser)
+                    interp_snr = np.interp(finer_wave, coarser_wave, snr_coarser)
+                    interp_flux_reduced = np.interp(finer_wave, coarser_wave, flux_reduced_coarser)
+    
+                    flux_finer = combined_flux[combined_overlap_indices]
+                    snr_finer = combined_snr[combined_overlap_indices]
+                    flux_reduced_finer = combined_flux_reduced[combined_overlap_indices]
+                else:
+                    # Interpolate combined spectrum onto current spectrum's wavelength grid
+                    finer_wave = wave_current[current_overlap_indices]
+                    coarser_wave = combined_wave[combined_overlap_indices]
+                    flux_coarser = combined_flux[combined_overlap_indices]
+                    snr_coarser = combined_snr[combined_overlap_indices]
+                    flux_reduced_coarser = combined_flux_reduced[combined_overlap_indices]
+    
+                    # Interpolate coarser spectrum onto finer_wave
+                    interp_flux = np.interp(finer_wave, coarser_wave, flux_coarser)
+                    interp_snr = np.interp(finer_wave, coarser_wave, snr_coarser)
+                    interp_flux_reduced = np.interp(finer_wave, coarser_wave, flux_reduced_coarser)
+    
+                    flux_finer = flux_current[current_overlap_indices]
+                    snr_finer = snr_current[current_overlap_indices]
+                    flux_reduced_finer = flux_reduced_current[current_overlap_indices]
+    
+                # Align mean fluxes before combination
+                mean_flux_finer = np.mean(flux_finer)
+                mean_flux_interp = np.mean(interp_flux)
+    
+                std_flux_finer = np.std(flux_finer)
+                std_flux_interp = np.std(interp_flux)
+    
+                N = len(finer_wave)
+                consistency_threshold = 3 * np.sqrt(std_flux_finer**2 + std_flux_interp**2) / np.sqrt(N)
+                mean_diff = abs(mean_flux_finer - mean_flux_interp)
+
+    
+                # Check for consistency and align if necessary
+                if mean_diff < consistency_threshold:
+                    print(f"Spectra are consistent in overlap between {overlap_start:.2f} and {overlap_end:.2f} Å.")
+                else:
+                    # Align the spectrum with the lower mean flux
+                    if mean_flux_finer < mean_flux_interp:
+                        alignment_factor = mean_flux_interp / mean_flux_finer
+                        flux_finer *= alignment_factor
+                        flux_reduced_finer *= alignment_factor
+                        snr_finer *= alignment_factor  # Adjust SNR accordingly
+                        if len(combined_overlap_indices) >= len(current_overlap_indices):
+                            # Update combined_flux with aligned values
+                            combined_flux[combined_overlap_indices] = flux_finer
+                            combined_flux_reduced[combined_overlap_indices] = flux_reduced_finer
+                            combined_snr[combined_overlap_indices] = snr_finer
+                    else:
+                        alignment_factor = mean_flux_finer / mean_flux_interp
+                        interp_flux *= alignment_factor
+                        interp_flux_reduced *= alignment_factor
+                        interp_snr *= alignment_factor  # Adjust SNR accordingly
+
+                # Combine fluxes using weighted SNR method
+                weights_finer = snr_finer ** 2
+                weights_interp = interp_snr ** 2
+                total_weights = weights_finer + weights_interp
+    
+                combined_flux_overlap = (flux_finer * weights_finer + interp_flux * weights_interp) / total_weights
+                combined_snr_overlap = np.sqrt(weights_finer + weights_interp)
+                combined_flux_reduced_overlap = (flux_reduced_finer * weights_finer + interp_flux_reduced * weights_interp) / total_weights
+
+    
+                # Update the combined spectrum
+                if len(combined_overlap_indices) >= len(current_overlap_indices):
+                    # Remove overlapping region from combined arrays
+                    non_overlap_indices_combined = np.where((combined_wave < overlap_start) | (combined_wave > overlap_end))[0]
+                    combined_wave = combined_wave[non_overlap_indices_combined]
+                    combined_flux = combined_flux[non_overlap_indices_combined]
+                    combined_snr = combined_snr[non_overlap_indices_combined]
+                    combined_flux_reduced = combined_flux_reduced[non_overlap_indices_combined]
+    
+                    # Append the combined overlap
+                    combined_wave = np.concatenate((combined_wave, finer_wave))
+                    combined_flux = np.concatenate((combined_flux, combined_flux_overlap))
+                    combined_snr = np.concatenate((combined_snr, combined_snr_overlap))
+                    combined_flux_reduced = np.concatenate((combined_flux_reduced, combined_flux_reduced_overlap))
+                else:
+                    # Update current spectrum
+                    non_overlap_indices_current = np.where((wave_current < overlap_start) | (wave_current > overlap_end))[0]
+                    wave_current = wave_current[non_overlap_indices_current]
+                    flux_current = flux_current[non_overlap_indices_current]
+                    snr_current = snr_current[non_overlap_indices_current]
+                    flux_reduced_current = flux_reduced_current[non_overlap_indices_current]
+    
+                    # Append the combined overlap
+                    wave_current = np.concatenate((finer_wave, wave_current))
+                    flux_current = np.concatenate((combined_flux_overlap, flux_current))
+                    snr_current = np.concatenate((combined_snr_overlap, snr_current))
+                    flux_reduced_current = np.concatenate((combined_flux_reduced_overlap, flux_reduced_current))
+    
+                    # Set combined arrays to current
+                    combined_wave = wave_current
+                    combined_flux = flux_current
+                    combined_snr = snr_current
+                    combined_flux_reduced = flux_reduced_current
+    
+                # Append non-overlapping parts of the current spectrum
+                if len(combined_overlap_indices) >= len(current_overlap_indices):
+                    # Add non-overlapping part of current spectrum
+                    non_overlap_indices_current = np.where(wave_current > overlap_end)[0]
+                    combined_wave = np.concatenate((combined_wave, wave_current[non_overlap_indices_current]))
+                    combined_flux = np.concatenate((combined_flux, flux_current[non_overlap_indices_current]))
+                    combined_snr = np.concatenate((combined_snr, snr_current[non_overlap_indices_current]))
+                    combined_flux_reduced = np.concatenate((combined_flux_reduced, flux_reduced_current[non_overlap_indices_current]))
+
+
+                # Sort the combined arrays
+                sorted_indices = np.argsort(combined_wave)
+                combined_wave = combined_wave[sorted_indices]
+                combined_flux = combined_flux[sorted_indices]
+                combined_snr = combined_snr[sorted_indices]
+                combined_flux_reduced = combined_flux_reduced[sorted_indices]
+    
+            else:
+                # No overlap; simply concatenate
+                combined_wave = np.concatenate((combined_wave, wave_current))
+                combined_flux = np.concatenate((combined_flux, flux_current))
+                combined_snr = np.concatenate((combined_snr, snr_current))
+                combined_flux_reduced = np.concatenate((combined_flux_reduced, flux_reduced_current))
+    
+                # Sort the combined arrays
+                sorted_indices = np.argsort(combined_wave)
+                combined_wave = combined_wave[sorted_indices]
+                combined_flux = combined_flux[sorted_indices]
+                combined_snr = combined_snr[sorted_indices]
+                combined_flux_reduced = combined_flux_reduced[sorted_indices]
+    
+        return combined_wave, combined_flux, combined_snr, combined_flux_reduced
+
+########################################                                   ########################################
     def _combine_spectra(self, wave_list, flux_list, snr_list, flux_reduced_list):
         """
         Combine multiple spectra into a single spectrum by averaging overlapping wavelengths.
@@ -1374,7 +1579,7 @@ class Star:
     #     fits_file= self.load_observation(1,'COMBINED')
     #     initial_template = fits_file.data['FLUX'][0]
     #     template_wave = fits_file.data['WAVE'][0]
-    #     shifts = np.arange(
+    #     CCF = CCFclass(
 
 
 ########################################                                ########################################
