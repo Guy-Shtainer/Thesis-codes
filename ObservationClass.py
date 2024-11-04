@@ -6,11 +6,13 @@ import shutil
 import pprint
 from astropy.io import fits
 import pandas as pd
+from collections.abc import MutableMapping
 import multiprocess
 from IPython.display import display
 from FitsClass import FITSFile as myfits 
 from StarClass import Star
 import specs
+
 
 
 class ObservationManager:
@@ -376,6 +378,107 @@ class ObservationManager:
         else:
             print("No data collected from stars.")
             return pd.DataFrame()  # Return an empty DataFrame if no data was found
+
+    def create_property_table_for_stars(self, property_name, stars=None, epoch_nums=None, band_list=None):
+        """
+        Creates a table of a specified property for a list of stars and epochs.
+    
+        Parameters:
+        - property_name (str): The name of the property to retrieve.
+        - stars (list, optional): List of star names. If None, iterates over all stars.
+        - epoch_list (list, optional): List of epoch numbers to filter by.
+        - band_list (list, optional): List of bands to filter by.
+    
+        Returns:
+        - pd.DataFrame: A Pandas DataFrame containing the property data for the selected stars.
+        """
+        
+    
+        all_data = []
+    
+        # If no stars are provided, use all stars
+        if stars is None:
+            stars = self.star_names
+
+        epoch_nums_was_none = False
+        if epoch_nums is None:
+            epoch_nums_was_none = True
+        
+        bands_was_none = False
+        if band_list is None:
+            bands_was_none = True
+            
+            
+        
+        # Loop through each star
+        for star_name in stars:
+            star = self.create_star_instance(star_name)
+            if star:
+                # Get list of epochs
+                if epoch_nums_was_none:
+                    epoch_nums = [int(epoch[-1]) for epoch in specs.obs_file_names[star_name].keys()]
+    
+                # Loop through each epoch
+                for epoch_num in epoch_nums:
+                    # Get list of bands
+                    if bands_was_none:
+                        bands = [band for band in specs.obs_file_names[star_name][f'epoch{epoch_num}'].keys()]
+
+                    try:
+                        for band in bands:
+                            # Load the property
+                            property_data = star.load_property(property_name, epoch_num=epoch_num, band=band)
+                            if property_data is not None:
+                                # Flatten the property data if it's a dictionary
+                                if isinstance(property_data, MutableMapping):
+                                    property_data_flat = self._flatten_dict(property_data)
+                                else:
+                                    property_data_flat = {property_name: property_data}
+        
+                                # Create a DataFrame row
+                                row = {
+                                    'Star': star_name,
+                                    'Epoch': epoch_num,
+                                    'Band': band,
+                                    **property_data_flat
+                                }
+                                all_data.append(row)
+                    except:
+                        print(f'Probably dont have epoch{epoch_num} or band {band} at star {star_name}')
+            
+    
+        # Create DataFrame from collected data
+        if all_data:
+            final_table = pd.DataFrame(all_data)
+            return final_table
+        else:
+            print("No data collected for the specified property.")
+            return pd.DataFrame()
+    
+    def _flatten_dict(self, d, parent_key='', sep='_'):
+        """
+        Flattens a nested dictionary.
+    
+        Parameters:
+        - d (dict): The dictionary to flatten.
+        - parent_key (str, optional): The base key string for recursion.
+        - sep (str, optional): The separator between parent and child keys.
+    
+        Returns:
+        - dict: A flattened dictionary.
+        """
+        items = []
+        for k, v in d.items():
+            new_key = f"{parent_key}{sep}{k}" if parent_key else k
+            if isinstance(v, MutableMapping):
+                items.extend(self._flatten_dict(v, new_key, sep=sep).items())
+            elif isinstance(v, list):
+                # Convert lists to strings or handle them as needed
+                items.append((new_key, v))
+            else:
+                items.append((new_key, v))
+        return dict(items)
+
     
 
     def process_star(self, args):
@@ -414,7 +517,7 @@ class ObservationManager:
             return (star_name, None)
     
     def execute_method_on_stars(self, method_name, stars=None, epoch_numbers=None, bands=None,
-                                params={}, overwrite=False, backup=True, parallel=False):
+                                params={}, overwrite=False, backup=True, parallel=False, max_workers = None):
         """
         Executes a specified method on multiple stars using star.execute_method().
 
@@ -447,7 +550,8 @@ class ObservationManager:
 
         if parallel:
             # Number of processes is the number of stars to process
-            max_workers = multiprocess.cpu_count() - 1
+            if max_workers == None:
+                max_workers = multiprocess.cpu_count() - 1
             # Prepare arguments for each star
             args_list = []
             for star_name in stars_to_process:
