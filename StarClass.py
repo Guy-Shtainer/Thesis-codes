@@ -1185,7 +1185,8 @@ class Star:
                     [uvb_wave, vis_wave, nir_wave],
                     [uvb_flux, vis_flux, nir_flux],
                     [uvb_snr, vis_snr, nir_snr],
-                    [uvb_red_flux,vis_red_flux,nir_red_flux]
+                    [uvb_red_flux,vis_red_flux,nir_red_flux],
+                    epoch_num
                 )
 
                 combined_data = {
@@ -1213,7 +1214,7 @@ class Star:
 
 ########################################                                   ########################################
 
-    def _combine_spectra_tmp(self, wave_list, flux_list, snr_list, flux_reduced_list):
+    def _combine_spectra_tmp(self, wave_list, flux_list, snr_list, flux_reduced_list,epoch_num):
         """
         Combine multiple spectra into a single spectrum by handling overlaps with different sampling,
         aligning mean fluxes before combination, and combining fluxes using the weighted SNR method.
@@ -1246,6 +1247,8 @@ class Star:
         combined_flux = flux_list[0]
         combined_snr = snr_list[0]
         combined_flux_reduced = flux_reduced_list[0]
+
+        aligment_data = {}
     
         # Loop over the rest of the spectra
         for idx in range(1, len(wave_list)):
@@ -1450,7 +1453,10 @@ class Star:
                 combined_snr = combined_snr[sorted_indices]
                 combined_flux_reduced = combined_flux_reduced[sorted_indices]
 
-        # plt.legend()
+            aligment_data_tmp = {'Alignment_factor' : alignment_factor, 'Initial_Alignment_score' : alignment_score, 'End_Alignment_score' : alignment_score_interp, 'Desc' : 'Alignment_factor is the factor one side of the spectra was multiplied by to make it consistent. Initial_Alignment_score is the score before the fixes. below 1 means it was already consistent, above means it wasnt. End_Alignment_score is the score after the fix, should be way closer to 0'}
+            aligment_data[f'overlap_{idx}'] = aligment_data_tmp
+        
+        self.save_property('aligment_data',aligment_data, epoch_number = epoch_num, band = 'COMBINED2',overwrite = True, backup = True)
     
         return combined_wave, combined_flux, combined_snr, combined_flux_reduced
 
