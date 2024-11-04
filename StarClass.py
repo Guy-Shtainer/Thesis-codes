@@ -1264,9 +1264,15 @@ class Star:
                 combined_overlap_indices = np.where((combined_wave >= overlap_start) & (combined_wave <= overlap_end))[0]
                 print(f'combined_overlap_indices is {combined_overlap_indices}')
                 current_overlap_indices = np.where((wave_current >= overlap_start) & (wave_current <= overlap_end))[0]
+                
+                # Determine which spectrum has finer sampling in the overlap
+                delta_combined = np.mean(np.diff(combined_wave[combined_overlap_indices]))
+                delta_current = np.mean(np.diff(wave_current[current_overlap_indices]))
 
-                mean_flux_combined = ut.robust_mean(combined_flux[combined_overlap_indices],1)
-                mean_flux_current = ut.robust_mean(flux_current[current_overlap_indices],1)
+                mean_flux_combined = ut.robust_mean(combined_flux[combined_overlap_indices[int(len(combined_overlap_indices)*0.95):]],1)
+                std_flux_combined = ut.robust_std(combined_flux[combined_overlap_indices[int(len(combined_overlap_indices)*0.95):]],1)
+                mean_flux_current = ut.robust_mean(flux_current[np.concatenate((current_overlap_indices[int(len(current_overlap_indices)*0.96):],np.arange(current_overlap_indices[-1]+1,current_overlap_indices[-1]+1+int(len(current_overlap_indices)*0.01),1)))],1)
+                std_flux_current = ut.robust_std(flux_current[np.concatenate((current_overlap_indices[int(len(current_overlap_indices)*0.96):],np.arange(current_overlap_indices[-1]+1,current_overlap_indices[-1]+1+int(len(current_overlap_indices)*0.01),1)))],1)
                 print(f'first the mean_flux_combined was {mean_flux_combined} and mean_flux_current is {mean_flux_current}')
 
                 # plt.plot(combined_wave,combined_flux, label = f'idx = {idx}')
@@ -1286,9 +1292,6 @@ class Star:
 
 
 
-                # Determine which spectrum has finer sampling in the overlap
-                delta_combined = np.mean(np.diff(combined_wave[combined_overlap_indices]))
-                delta_current = np.mean(np.diff(wave_current[current_overlap_indices]))
     
                 if delta_combined <= delta_current:
                     # Combined spectrum has finer sampling
@@ -1325,10 +1328,11 @@ class Star:
                 std_flux_coarser = np.std(interp_flux_coarser)
 
                 print(f'mean_flux_finer is {mean_flux_finer} and mean_flux_coarser is {mean_flux_coarser}')
-                alignment_score = abs(mean_flux_combined - mean_flux_current) / np.sqrt(std_flux_finer**2 + std_flux_coarser**2)
+                alignment_score = abs(mean_flux_combined - mean_flux_current) / np.sqrt(std_flux_combined**2 + std_flux_current**2)
+                alignment_score_interp = abs(mean_flux_finer - mean_flux_coarser) / np.sqrt(std_flux_finer**2 + std_flux_coarser**2)
     
-                # # Calculate alignment factor and alignment score
-                # if mean_flux_finer > mean_flux_coarser: # determines aligment factor, but which is finer now?
+                # Calculate alignment factor and alignment score
+                # if mean_flux_finer >= mean_flux_coarser: # determines aligment factor, but which is finer now?
                 #     alignment_factor = mean_flux_finer / mean_flux_coarser
                 #     print(f'entered case where mean_flux_finer > mean_flux_coarser but is_finer_combined = {is_finer_combined}')
                 #     if is_finer_combined:
@@ -1356,16 +1360,15 @@ class Star:
                 #         combined_flux_reduced *= alignment_factor
                 #         combined_snr *= alignment_factor
 
-                #         flux_finer *= alignment_factor
-                #         flux_reduced_finer *= alignment_factor
-                #         snr_finer *= alignment_factor
-
                 #     else:
                 #         # Adjust current spectrum
                 #         flux_current *= alignment_factor
                 #         flux_reduced_current *= alignment_factor
                 #         snr_current *= alignment_factor
                     
+                #     flux_finer *= alignment_factor
+                #     flux_reduced_finer *= alignment_factor
+                #     snr_finer *= alignment_factor
                     # # Recalculate interpolated fluxes after alignment
                     # interp_flux_coarser = interp_flux_coarser * alignment_factor
                     # interp_snr_coarser = interp_snr_coarser * alignment_factor
@@ -1431,7 +1434,7 @@ class Star:
     
                 # Print alignment information
                 print(f"Aligned spectra in overlap between {overlap_start:.2f} and {overlap_end:.2f} Å.")
-                print(f"Alignment factor: {alignment_factor:.4f}, Alignment score: {alignment_score:.4f}")
+                print(f"Alignment factor: {alignment_factor:.4f}, Alignment score: {alignment_score:.4f} and Alignment scoreafter interpolation: {alignment_score_interp:.4f}")
     
             else:
                 # No overlap; simply concatenate
