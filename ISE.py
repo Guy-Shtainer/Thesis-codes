@@ -13,13 +13,6 @@ import argparse
 import specs
 import gc
 
-
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.widgets import Button
-import threading
-import gc
-
 def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=None,
                               overwrite=False, backup=True, load_saved=False):
     """
@@ -71,6 +64,12 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
         flux = fits_file.data['FLUX'][0]
 
     def update_plot(new_epoch=False):
+        # Save the current axis limits if not a new epoch and axis has data
+        if not new_epoch and ax1.has_data():
+            xlim1 = ax1.get_xlim()
+            ylim1 = ax1.get_ylim()
+        else:
+            xlim1, ylim1 = None, None
         ax1.clear()
         ax1.plot(wavelength, flux, '.', color='gray', markersize=2, label='Data')
         if selected_wavelengths_tmp:
@@ -79,12 +78,21 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
         ax1.set_ylabel('Flux')
         ax1.set_title(f'Interactive Normalization - Star: {star.star_name}, Epoch: {epoch_numbers[current_epoch_idx]}, Band: {band}')
         ax1.legend()
-
-        plot_interpolated_flux()
+        # Restore the axis limits if not a new epoch and limits were saved
+        if not new_epoch and xlim1 is not None and ylim1 is not None:
+            ax1.set_xlim(xlim1)
+            ax1.set_ylim(ylim1)
+        plot_interpolated_flux(new_epoch)
         plot_normalized_flux(new_epoch)
         fig.canvas.draw_idle()
 
-    def plot_interpolated_flux():
+    def plot_interpolated_flux(new_epoch=False):
+        # Save the current axis limits if not a new epoch and axis has data
+        if not new_epoch and ax_mid.has_data():
+            xlim_mid = ax_mid.get_xlim()
+            ylim_mid = ax_mid.get_ylim()
+        else:
+            xlim_mid, ylim_mid = None, None
         ax_mid.clear()
         ax_mid.plot(wavelength, flux, '.', color='gray', markersize=2, label='Data')
         if len(selected_wavelengths_tmp) >= 2:
@@ -100,8 +108,18 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
             ax_mid.set_title("Not enough points selected for interpolation.")
         ax_mid.set_ylabel('Flux')
         ax_mid.legend()
+        # Restore the axis limits if not a new epoch and limits were saved
+        if not new_epoch and xlim_mid is not None and ylim_mid is not None:
+            ax_mid.set_xlim(xlim_mid)
+            ax_mid.set_ylim(ylim_mid)
 
     def plot_normalized_flux(new_epoch=False):
+        # Save the current axis limits if not a new epoch and axis has data
+        if not new_epoch and ax2.has_data():
+            xlim2 = ax2.get_xlim()
+            ylim2 = ax2.get_ylim()
+        else:
+            xlim2, ylim2 = None, None
         ax2.clear()
         if len(selected_wavelengths_tmp) >= 2:
             selected_fluxes_current_epoch = np.interp(selected_wavelengths_tmp, wavelength, flux)
@@ -118,6 +136,10 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
         ax2.set_xlabel('Wavelength')
         ax2.set_ylabel('Normalized Flux')
         ax2.legend()
+        # Restore the axis limits if not a new epoch and limits were saved
+        if not new_epoch and xlim2 is not None and ylim2 is not None:
+            ax2.set_xlim(xlim2)
+            ax2.set_ylim(ylim2)
 
     def onpress(event):
         if event.inaxes != ax1:
@@ -188,7 +210,7 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
         if current_epoch_idx < len(epoch_numbers) - 1:
             current_epoch_idx += 1
             load_data()
-            update_plot(True)
+            update_plot(new_epoch=True)
         else:
             print('Already at the last epoch.')
 
@@ -202,7 +224,7 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
         if current_epoch_idx > 0:
             current_epoch_idx -= 1
             load_data()
-            update_plot(True)
+            update_plot(new_epoch=True)
         else:
             print('Already at the first epoch.')
 
@@ -241,6 +263,27 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
         proceed_event.set()
         plt.close(fig)
 
+        print('Finished normalization.')
+
+        # Save normalization results for all epochs
+        for epoch_number in epoch_numbers:
+            if len(selected_wavelengths_tmp) < 2:
+                print(f"Not enough points selected for interpolation in epoch {epoch_number}. Skipping.")
+                continue
+            fits_file = star.load_observation(epoch_number, band)
+            wavelength_epoch = fits_file.data['WAVE'][0]
+            flux_epoch = fits_file.data['FLUX'][0]
+            selected_fluxes_epoch = np.interp(selected_wavelengths_tmp, wavelength_epoch, flux_epoch)
+            sorted_indices = np.argsort(selected_wavelengths_tmp)
+            selected_wavelengths_epoch = np.array(selected_wavelengths_tmp)[sorted_indices]
+            selected_fluxes_epoch = selected_fluxes_epoch[sorted_indices]
+            interpolated_flux_epoch = np.interp(wavelength_epoch, selected_wavelengths_epoch, selected_fluxes_epoch)
+            normalized_flux = flux_epoch / interpolated_flux_epoch
+            star.save_property('norm_anchor_wavelengths', selected_wavelengths_epoch, epoch_number, band, overwrite=overwrite, backup=backup)
+            star.save_property('normalized_flux', {'wavelengths': wavelength_epoch, 'normalized_flux': normalized_flux}, epoch_number, band, overwrite=overwrite, backup=backup)
+            star.save_property('interpolated_flux', {'wavelengths': wavelength_epoch,  'interpolated_flux': interpolated_flux_epoch}, epoch_number, band, overwrite=overwrite, backup=backup)
+            print(f"Saved normalization results for epoch {epoch_number}")
+
     btn_finish.on_clicked(finish)
 
     load_data()
@@ -253,7 +296,6 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
 
     print(f'Chosen navigation: {navigation_choice}')
     return navigation_choice
-
 
 
 
