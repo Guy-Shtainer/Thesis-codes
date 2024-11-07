@@ -27,7 +27,6 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
         backup (bool): Whether to create a backup if overwriting. Default is True.
         load_saved (bool): Whether to load saved anchor points if available. Default is False.
     """
-    proceed_event = threading.Event()
     current_epoch_idx = 0  # To keep track of the current epoch index
     navigation_choice = "finish"  # Default navigation choice if no button is pressed
 
@@ -56,6 +55,11 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
         except Exception as e:
             print(f"Error loading saved anchor points: {e}")
 
+    # Variables to store axis limits
+    xlim1, ylim1 = None, None
+    xlim_mid, ylim_mid = None, None
+    xlim2, ylim2 = None, None
+
     def load_data():
         nonlocal wavelength, flux
         epoch_number = epoch_numbers[current_epoch_idx]
@@ -63,13 +67,12 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
         wavelength = fits_file.data['WAVE'][0]
         flux = fits_file.data['FLUX'][0]
 
-    def update_plot(new_epoch=False):
-        # Save the current axis limits if not a new epoch and axis has data
-        if not new_epoch and ax1.has_data():
+    def update_plot():
+        nonlocal xlim1, ylim1
+        # Save the current axis limits if axis has data
+        if ax1.has_data():
             xlim1 = ax1.get_xlim()
             ylim1 = ax1.get_ylim()
-        else:
-            xlim1, ylim1 = None, None
         ax1.clear()
         ax1.plot(wavelength, flux, '.', color='gray', markersize=2, label='Data')
         if selected_wavelengths_tmp:
@@ -78,21 +81,19 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
         ax1.set_ylabel('Flux')
         ax1.set_title(f'Interactive Normalization - Star: {star.star_name}, Epoch: {epoch_numbers[current_epoch_idx]}, Band: {band}')
         ax1.legend()
-        # Restore the axis limits if not a new epoch and limits were saved
-        if not new_epoch and xlim1 is not None and ylim1 is not None:
+        # Restore the axis limits if limits were saved
+        if xlim1 is not None and ylim1 is not None:
             ax1.set_xlim(xlim1)
             ax1.set_ylim(ylim1)
-        plot_interpolated_flux(new_epoch)
-        plot_normalized_flux(new_epoch)
+        plot_interpolated_flux()
+        plot_normalized_flux()
         fig.canvas.draw_idle()
 
-    def plot_interpolated_flux(new_epoch=False):
-        # Save the current axis limits if not a new epoch and axis has data
-        if not new_epoch and ax_mid.has_data():
+    def plot_interpolated_flux():
+        nonlocal xlim_mid, ylim_mid
+        if ax_mid.has_data():
             xlim_mid = ax_mid.get_xlim()
             ylim_mid = ax_mid.get_ylim()
-        else:
-            xlim_mid, ylim_mid = None, None
         ax_mid.clear()
         ax_mid.plot(wavelength, flux, '.', color='gray', markersize=2, label='Data')
         if len(selected_wavelengths_tmp) >= 2:
@@ -108,18 +109,16 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
             ax_mid.set_title("Not enough points selected for interpolation.")
         ax_mid.set_ylabel('Flux')
         ax_mid.legend()
-        # Restore the axis limits if not a new epoch and limits were saved
-        if not new_epoch and xlim_mid is not None and ylim_mid is not None:
+        # Restore the axis limits if limits were saved
+        if xlim_mid is not None and ylim_mid is not None:
             ax_mid.set_xlim(xlim_mid)
             ax_mid.set_ylim(ylim_mid)
 
-    def plot_normalized_flux(new_epoch=False):
-        # Save the current axis limits if not a new epoch and axis has data
-        if not new_epoch and ax2.has_data():
+    def plot_normalized_flux():
+        nonlocal xlim2, ylim2
+        if ax2.has_data():
             xlim2 = ax2.get_xlim()
             ylim2 = ax2.get_ylim()
-        else:
-            xlim2, ylim2 = None, None
         ax2.clear()
         if len(selected_wavelengths_tmp) >= 2:
             selected_fluxes_current_epoch = np.interp(selected_wavelengths_tmp, wavelength, flux)
@@ -136,8 +135,8 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
         ax2.set_xlabel('Wavelength')
         ax2.set_ylabel('Normalized Flux')
         ax2.legend()
-        # Restore the axis limits if not a new epoch and limits were saved
-        if not new_epoch and xlim2 is not None and ylim2 is not None:
+        # Restore the axis limits if limits were saved
+        if xlim2 is not None and ylim2 is not None:
             ax2.set_xlim(xlim2)
             ax2.set_ylim(ylim2)
 
@@ -206,11 +205,11 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
     btn_next_epoch = Button(ax_next_epoch, 'Next Epoch')
 
     def next_epoch(event):
-        nonlocal current_epoch_idx
+        nonlocal current_epoch_idx, xlim1, ylim1, xlim_mid, ylim_mid, xlim2, ylim2
         if current_epoch_idx < len(epoch_numbers) - 1:
             current_epoch_idx += 1
             load_data()
-            update_plot(new_epoch=True)
+            update_plot()
         else:
             print('Already at the last epoch.')
 
@@ -220,11 +219,11 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
     btn_prev_epoch = Button(ax_prev_epoch, 'Previous Epoch')
 
     def prev_epoch(event):
-        nonlocal current_epoch_idx
+        nonlocal current_epoch_idx, xlim1, ylim1, xlim_mid, ylim_mid, xlim2, ylim2
         if current_epoch_idx > 0:
             current_epoch_idx -= 1
             load_data()
-            update_plot(new_epoch=True)
+            update_plot()
         else:
             print('Already at the first epoch.')
 
@@ -237,7 +236,6 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
     def next_star(event):
         nonlocal navigation_choice
         navigation_choice = "next"
-        proceed_event.set()
         plt.close(fig)
 
     btn_next_star.on_clicked(next_star)
@@ -248,7 +246,6 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
     def prev_star(event):
         nonlocal navigation_choice
         navigation_choice = "previous"
-        proceed_event.set()
         plt.close(fig)
 
     btn_prev_star.on_clicked(prev_star)
@@ -260,7 +257,6 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
     def finish(event):
         nonlocal navigation_choice
         navigation_choice = "finish"
-        proceed_event.set()
         plt.close(fig)
 
         print('Finished normalization.')
@@ -290,14 +286,8 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
     update_plot()
     plt.show()
 
-    while not proceed_event.is_set():
-        proceed_event.wait()
-        gc.collect()
-
     print(f'Chosen navigation: {navigation_choice}')
     return navigation_choice
-
-
 
 def filter_f(wavelength, flux, batch_size=6, big_batch_size=10):
     flux_std = np.std(flux)
@@ -378,7 +368,7 @@ def main():
     parser = argparse.ArgumentParser(description="Interactive normalization of spectra.")
     parser.add_argument('--star_names', nargs='+', default=None, help='List of star names to process')
     parser.add_argument('--overwrite_flag', action='store_true', default=False, help='Flag to overwrite existing files')
-    parser.add_argument('--backup_flag', action='store_true', default=True, help='Flag to create backups before overwriting')
+    parser.add_argument('--backup_flag', action='store_true', default=False, help='Flag to create backups before overwriting')
     parser.add_argument('--skip_flag', action='store_true', default=False, help='Flag to skip if results file already exist')
     parser.add_argument('--filter_flag', action='store_true', default=False, help='Flag to use the filtering function')
     parser.add_argument('--load_saved_flag', action='store_true', default=False, help='Flag to load saved anchor points if available')
