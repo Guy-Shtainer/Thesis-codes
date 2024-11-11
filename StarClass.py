@@ -9,14 +9,19 @@ import matplotlib.pyplot as plt
 import utils as ut
 from IPython.display import display
 from astropy.io import fits
-import specs
-from FitsClass import FITSFile as myfits 
-from CCF import CCFclass
-import plot as p
 from threading import Thread
 import multiprocess
 from itertools import product
 from functools import partial
+
+#Tomers tools
+from CCF import CCFclass
+import plot as p
+import TwoDImage as p2D
+
+# My tools
+import specs
+from FitsClass import FITSFile as myfits 
 
 #SIMBAD
 import requests
@@ -43,9 +48,17 @@ class Star:
         self.included_flux = []
         self.sensitivities = []
 
+
+
+########################################                 Printing                       ########################################
+
+    def print(self,text, to_print = True):
+        if to_print:
+            print(text)
+    
 ########################################                 File Handleing                      ########################################
     
-    def get_file_path(self, epoch_number, band=None):
+    def get_file_path(self, epoch_number, band=None, D2 = False):
         """
         Retrieves the full path for a specific observation.
 
@@ -65,21 +78,20 @@ class Star:
 
         epoch_data = self.observation_dict[f'epoch{epoch_number}']
         # If a band is specified, return the file for that band
-        if band:
-            if band in epoch_data:
-                filename = epoch_data[band]
+        if band == None:
+            band = 'combined'
+        if band in epoch_data:
+            filename = epoch_data[band]
+            if not D2:
                 return os.path.join(self.data_dir, self.star_name, f'epoch{epoch_number}', band, filename)
             else:
-                print(f"Band '{band}' not found in epoch '{epoch_number}")
-                return None
+                num = int(filename.split('.')[-2])
+                num += 1
+                filename = filename[:-15] + ':' + filename[-14:-12] + ':' + filename[-11:-8] + f'{num}'.zfill(3) + '.fits'
+                return os.path.join(self.data_dir, self.star_name, f'epoch{epoch_number}', band, '2D image',filename)
         else:
-            # Assume we're looking for a combined file if no band is specified
-            if 'combined' in epoch_data:
-                filename = epoch_data['combined']
-                return os.path.join(self.data_dir, self.star_name, f'epoch{epoch_number}', 'combined', filename)
-            else:
-                print(f"Combined FITS file not found for epoch '{epoch_number}")
-                return None
+            print(f"Band '{band}' not found in epoch '{epoch_number}")
+            return None
 
 ########################################                                     ########################################
     
@@ -572,13 +584,13 @@ class Star:
     
 ########################################                                     ########################################
     
-    def load_property(self, property_name, epoch_number, band):
+    def load_property(self, property_name, epoch_num, band, to_print = True):
         """
         Loads and returns the data stored in the specified property for a given epoch and band.
 
         Parameters:
             property_name (str): The name of the property to load.
-            epoch_number (int or str): The epoch number.
+            epoch_num (int or str): The epoch number.
             band (str): The band name.
 
         Returns:
@@ -587,11 +599,11 @@ class Star:
 
         """
         # Construct the path to the output directory for the specified epoch and band
-        epoch_str = f'epoch{epoch_number}'
+        epoch_str = f'epoch{epoch_num}'
         output_dir = os.path.join(self.data_dir, self.star_name, epoch_str, band, 'output')
 
         if not os.path.exists(output_dir):
-            print(f"No output directory found for star '{self.star_name}', epoch '{epoch_number}', band '{band}'.")
+            print(f"No output directory found for star '{self.star_name}', epoch '{epoch_num}', band '{band}'.")
             return None
 
         # Construct the full path to the property
@@ -620,9 +632,9 @@ class Star:
                     if 1 <= selected_index <= len(files_in_folder):
                         break
                     else:
-                        print("Invalid input. Please enter a valid file number.")
+                        self.print("Invalid input. Please enter a valid file number.",to_print)
                 except ValueError:
-                    print("Invalid input. Please enter a number corresponding to the file.")
+                    self.print("Invalid input. Please enter a number corresponding to the file.",to_print)
 
             # Load and return the selected file
             selected_file = files_in_folder[selected_index - 1]
@@ -630,19 +642,19 @@ class Star:
             return self._load_file(selected_file_path)
         else:
             # Property does not exist
-            print(f"No file or folder named '{property_name}' found in '{output_dir}'.")
+            self.print(f"No file or folder named '{property_name}' found in '{output_dir}'.",to_print)
             return None
 
 
     
 ########################################                                     ########################################
     
-    def load_observation(self, epoch_number, band=None):
+    def load_observation(self, epoch_num, band=None):
         """
         Loads the FITS file for a specific observation.
 
         Parameters:
-        - epoch_number (int): The epoch number to retrieve the observation from.
+        - epoch_num (int): The epoch number to retrieve the observation from.
         - band (str, optional): The band (e.g., 'UVB', 'VIS', 'NIR'). If not specified, assumes combined.
 
         Returns:
@@ -652,7 +664,40 @@ class Star:
         # Get the full path of the FITS file
         if band == None:
             band = 'combined'
-        file_path = self.get_file_path(epoch_number, band)
+        file_path = self.get_file_path(epoch_num, band)
+        print(file_path)
+
+        if not file_path:
+            print("Error: Could not find the requested file.")
+            return None
+
+        # Load the FITS file using FITSFile class from FitsClass
+        try:
+            fits_file = myfits(file_path)
+            fits_file.load_data()
+            return fits_file
+        except Exception as e:
+            print(f"Error loading FITS file: {e} error here")
+            return None
+
+########################################                                     ########################################
+        
+    def load_2D_observation(self, epoch_num, band=None):
+        """
+        Loads the FITS file for a specific observation.
+
+        Parameters:
+        - epoch_num (int): The epoch number to retrieve the observation from.
+        - band (str, optional): The band (e.g., 'UVB', 'VIS', 'NIR'). If not specified, assumes combined.
+
+        Returns:
+        - FITSFile object: The loaded FITS file object.
+        - None: If the file is not found or cannot be loaded.
+        """
+        # Get the full path of the FITS file
+        if band == None:
+            band = 'combined'
+        file_path = self.get_file_path(epoch_num, band, D2 = True)
         print(file_path)
 
         if not file_path:
@@ -965,6 +1010,14 @@ class Star:
         except Exception as e:
             print(f"Error plotting spectrum: {e}")
 
+    def plot_2D_image(self,epoch_num,band,title='', ValMin=None, ValMax=None,norm = False):
+        fits_file_1D = self.load_observation(epoch_num,band)
+        wavelengths = fits_file_1D.data['WAVE'][0]
+        fits_file_2D = self.load_2D_observation(epoch_num,band)
+        image_data = fits_file_2D.primary_data
+        p2D.Plot2DImage(image_data,wavelengths, title=title, ValMin=ValMin, ValMax=ValMax,norm = norm)
+    
+
 ########################################                 Method Executer                      ########################################
     
     def execute_method(self, method, params={}, epoch_numbers=None, bands=None, overwrite=False, backup=True, save = True, parallel=False, max_workers=None):
@@ -1133,7 +1186,7 @@ class Star:
 
 ########################################                Combined Spectra                   ########################################
 
-    def combine_fits_files(self, epoch_num=None,band = None):
+    def combine_fits_files(self, epoch_num=None,band = None,overwrite = False, backup = False, save = False):
         try:
             # Determine which epochs to process
             # if epoch_num is None:
@@ -1155,8 +1208,8 @@ class Star:
                     raise FileNotFoundError("One or more FITS files for the specified epoch do not exist.")
 
                 # Create the COMBINED folder if it doesn't exist
-                # combined_folder = os.path.join(os.path.dirname(os.path.dirname(self.get_file_path(epoch_num, band='NIR'))), 'COMBINED')
-                combined_folder = os.path.join(os.path.dirname(os.path.dirname(self.get_file_path(epoch_num, band='NIR'))), 'COMBINED2')
+                combined_folder = os.path.join(os.path.dirname(os.path.dirname(self.get_file_path(epoch_num, band='NIR'))), 'COMBINED')
+                # combined_folder = os.path.join(os.path.dirname(os.path.dirname(self.get_file_path(epoch_num, band='NIR'))), 'COMBINED2')
                 os.makedirs(combined_folder, exist_ok=True)
 
                 # Extract WAVE, FLUX, and SNR data
@@ -1181,7 +1234,7 @@ class Star:
                 #     [nir_red_flux,vis_red_flux,uvb_red_flux]
                 # )
 
-                combined_wave, combined_flux, combined_snr, combined_flux_reduced = self._combine_spectra_tmp(
+                combined_wave, combined_flux, combined_snr, combined_flux_reduced,aligment_data = self._combine_spectra_tmp(
                     [uvb_wave, vis_wave, nir_wave],
                     [uvb_flux, vis_flux, nir_flux],
                     [uvb_snr, vis_snr, nir_snr],
@@ -1199,9 +1252,12 @@ class Star:
                     # 'ERR_REDUCED': combined_err_reduced
                 }
 
-                # Create and save the new FITS file
-                combined_fits_path = os.path.join(combined_folder, f'combined_bands.fits')
-                self.create_combined_fits(nir_fits, combined_data, combined_fits_path)
+                if save:
+                    # Create and save the new FITS file
+                    combined_fits_path = os.path.join(combined_folder, f'combined_bands.fits')
+                    self.create_combined_fits(nir_fits, combined_data, combined_fits_path)
+                    self.save_property('aligment_data',aligment_data, epoch_number = epoch_num, band = 'COMBINED',overwrite = True, backup = True)
+                    
 
                 print(f'Combined FITS file saved at: {combined_fits_path}')
 
@@ -1292,8 +1348,6 @@ class Star:
                     combined_flux *= alignment_factor
                     combined_snr *= alignment_factor
                     combined_flux_reduced *= alignment_factor
-
-
 
     
                 if delta_combined <= delta_current:
@@ -1456,9 +1510,8 @@ class Star:
             aligment_data_tmp = {'Alignment_factor' : alignment_factor, 'Initial_Alignment_score' : alignment_score, 'End_Alignment_score' : alignment_score_interp, 'Desc' : 'Alignment_factor is the factor one side of the spectra was multiplied by to make it consistent. Initial_Alignment_score is the score before the fixes. below 1 means it was already consistent, above means it wasnt. End_Alignment_score is the score after the fix, should be way closer to 0'}
             aligment_data[f'overlap_{idx}'] = aligment_data_tmp
         
-        self.save_property('aligment_data',aligment_data, epoch_number = epoch_num, band = 'COMBINED2',overwrite = True, backup = True)
     
-        return combined_wave, combined_flux, combined_snr, combined_flux_reduced
+        return combined_wave, combined_flux, combined_snr, combined_flux_reduced,aligment_data
 
 
 

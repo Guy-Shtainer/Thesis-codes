@@ -14,7 +14,6 @@ from StarClass import Star
 import specs
 
 
-
 class ObservationManager:
     def __init__(self,data_dir = f'Data/',backup_dir = f'Backups/', specs_filepath = f'specs.py'):
         """
@@ -250,6 +249,138 @@ class ObservationManager:
                     except Exception as e:
                         print(f"Error processing {filepath}: {e}")
 
+
+    
+    def organize_star_2D_images(self, fits_directory, output_directory=None):
+        """
+        Reads star names from specs.py and organizes 2D spectral image FITS files into folders.
+        Creates a "2D image" folder within the star/epoch/band structure to store the 2D image files.
+    
+        Parameters:
+        - fits_directory (str): Directory path where the FITS files are located.
+        - output_directory (str): Directory path where the organized folders should be created.
+        """
+        import importlib.util
+        star_names = specs.star_names
+    
+        print(f"Star names found: {star_names}")
+    
+        if output_directory is None:
+            output_directory = self.data_dir
+    
+        # Step 2: Scan fits_directory for FITS files
+        fits_files = glob.glob(os.path.join(fits_directory, '**', '*.fits'), recursive=True)
+        print(f"Found {len(fits_files)} FITS files in {fits_directory}")
+    
+        # Step 3: Organize files for each star
+        for star_name in star_names:
+            print(f"Organizing files for star: {star_name}")
+    
+            # Create star directory in output_directory
+            star_dir = os.path.join(output_directory, star_name)
+            os.makedirs(star_dir, exist_ok=True)
+    
+            # Filter FITS files for this star
+            star_fits_files = []
+    
+            for filepath in fits_files:
+                try:
+                    with fits.open(filepath) as hdulist:
+                        header = hdulist[0].header
+                        file_star_name = header.get('OBJECT')
+                        if file_star_name.strip() == star_name:
+                            star_fits_files.append(filepath)
+                except Exception as e:
+                    print(f"Error reading {filepath}: {e}")
+    
+            print(f"Found {len(star_fits_files)} FITS files for {star_name}")
+    
+            # Group files by date (to define epochs)
+            files_by_date = {}
+            for filepath in star_fits_files:
+                try:
+                    with fits.open(filepath) as hdulist:
+                        header = hdulist[0].header
+                        date_obs = header.get('DATE-OBS')
+                        dispelem = header.get('ESO SEQ ARM')
+                        if not all([date_obs, dispelem]):
+                            print(f"Skipping {filepath}: Missing DATE-OBS or DISPELEM")
+                            continue
+    
+                        # Convert date_obs to date string (YYYY-MM-DD)
+                        date_str = date_obs.split('T')[0]
+                        # Group files by date
+                        if date_str not in files_by_date:
+                            files_by_date[date_str] = []
+                        files_by_date[date_str].append(filepath)
+                except Exception as e:
+                    print(f"Error processing {filepath}: {e}")
+    
+            # Assign epoch numbers based on sorted dates
+            sorted_dates = sorted(files_by_date.keys())
+            date_to_epoch = {date: f'epoch{idx + 1}' for idx, date in enumerate(sorted_dates)}
+    
+            # Process each epoch
+            for date_str, files in files_by_date.items():
+                epoch = date_to_epoch[date_str]
+                print(f"Processing {len(files)} files for {star_name} on {date_str} ({epoch})")
+    
+                # Create epoch directory
+                epoch_dir = os.path.join(star_dir, epoch)
+                os.makedirs(epoch_dir, exist_ok=True)
+    
+                # Process each FITS file
+                for filepath in files:
+                    try:
+                        with fits.open(filepath) as hdulist:
+                            header = hdulist[0].header
+                            date_obs = header.get('DATE-OBS')
+                            if not date_obs:
+                                print(f"Skipping {filepath}: Missing DATE-OBS")
+                                continue
+    
+                            # Extract observation time from DATE-OBS
+                            date_obs_time = date_obs.strip()
+    
+                            # Extract PROV# filenames and their timestamps
+                            prov_times = {}
+                            for i in range(1, 10):
+                                prov_key = f'PROV{i}'
+                                prov_filename = header.get(prov_key)
+                                if not prov_filename:
+                                    break
+                                prov_basename = os.path.basename(prov_filename)
+                                prov_parts = prov_basename.split('.')
+                                if len(prov_parts) >= 2:
+                                    prov_timestamp = prov_parts[1]
+                                    prov_times[prov_timestamp] = i  # Store sub-exposure number
+    
+                            # Determine sub-exposure number by matching times
+                            sub_exp_num = None
+                            for prov_timestamp, sub_num in prov_times.items():
+                                if prov_timestamp == date_obs_time:
+                                    sub_exp_num = sub_num
+                                    break
+                            if not sub_exp_num:
+                                print(f"Sub-exposure not found for {filepath}. Assigning to sub-exposure 1.")
+                                sub_exp_num = 1
+    
+                            # Get band information
+                            band = header.get('ESO SEQ ARM', 'Unknown').strip()
+    
+                            # Create directory structure with "2D image" folder
+                            image_dir = os.path.join(epoch_dir, band, '2D image')
+                            os.makedirs(image_dir, exist_ok=True)
+    
+                            # Copy the FITS file to the "2D image" directory
+                            dest_filepath = os.path.join(image_dir, os.path.basename(filepath))
+                            shutil.copy2(filepath, dest_filepath)
+                            print(f"Copied {filepath} to {dest_filepath}")
+    
+                    except Exception as e:
+                        print(f"Error processing {filepath}: {e}")
+
+
     def get_star_names_from_fits(self, search_path):
         """
         Scans the given directory recursively for FITS files,
@@ -379,37 +510,35 @@ class ObservationManager:
             print("No data collected from stars.")
             return pd.DataFrame()  # Return an empty DataFrame if no data was found
 
-    def create_property_table_for_stars(self, property_name, stars=None, epoch_nums=None, band_list=None):
+    def create_property_table_for_stars(self, property_name, stars=None, epoch_nums=None, band_list=None, to_print=False):
         """
         Creates a table of a specified property for a list of stars and epochs.
     
         Parameters:
         - property_name (str): The name of the property to retrieve.
         - stars (list, optional): List of star names. If None, iterates over all stars.
-        - epoch_list (list, optional): List of epoch numbers to filter by.
+        - epoch_nums (list, optional): List of epoch numbers to filter by.
         - band_list (list, optional): List of bands to filter by.
+        - to_print (bool, optional): Whether to print additional information.
     
         Returns:
         - pd.DataFrame: A Pandas DataFrame containing the property data for the selected stars.
         """
-        
     
         all_data = []
     
         # If no stars are provided, use all stars
         if stars is None:
             stars = self.star_names
-
+    
         epoch_nums_was_none = False
         if epoch_nums is None:
             epoch_nums_was_none = True
-        
+    
         bands_was_none = False
         if band_list is None:
             bands_was_none = True
-            
-            
-        
+    
         # Loop through each star
         for star_name in stars:
             star = self.create_star_instance(star_name)
@@ -423,61 +552,63 @@ class ObservationManager:
                     # Get list of bands
                     if bands_was_none:
                         bands = [band for band in specs.obs_file_names[star_name][f'epoch{epoch_num}'].keys()]
-
                     try:
                         for band in bands:
                             # Load the property
-                            property_data = star.load_property(property_name, epoch_num=epoch_num, band=band)
+                            property_data = star.load_property(property_name, epoch_num=epoch_num, band=band, to_print=to_print)
                             if property_data is not None:
                                 # Flatten the property data if it's a dictionary
                                 if isinstance(property_data, MutableMapping):
                                     property_data_flat = self._flatten_dict(property_data)
                                 else:
-                                    property_data_flat = {property_name: property_data}
-        
-                                # Create a DataFrame row
+                                    property_data_flat = { (property_name,): property_data }
+    
+                                # Create a DataFrame row with tuple keys for MultiIndex
                                 row = {
-                                    'Star': star_name,
-                                    'Epoch': epoch_num,
-                                    'Band': band,
+                                    ('Star',): star_name,
+                                    ('Epoch',): epoch_num,
+                                    ('Band',): band,
                                     **property_data_flat
                                 }
                                 all_data.append(row)
-                    except:
-                        print(f'Probably dont have epoch{epoch_num} or band {band} at star {star_name}')
-            
+                    except Exception as e:
+                        star.print(f'Error with epoch {epoch_num}, band {band} for star {star_name}: {e}', to_print)
     
         # Create DataFrame from collected data
         if all_data:
             final_table = pd.DataFrame(all_data)
+    
+            # Ensure all columns are tuples for MultiIndex
+            final_table.columns = pd.MultiIndex.from_tuples(final_table.columns)
+    
+            # Optionally sort the MultiIndex columns for better readability
+            final_table = final_table.sort_index(axis=1)
+    
             return final_table
         else:
             print("No data collected for the specified property.")
             return pd.DataFrame()
     
-    def _flatten_dict(self, d, parent_key='', sep='_'):
+    def _flatten_dict(self, d, parent_key=()):
         """
-        Flattens a nested dictionary.
+        Flattens a nested dictionary into a dictionary with tuple keys for MultiIndex.
     
         Parameters:
         - d (dict): The dictionary to flatten.
-        - parent_key (str, optional): The base key string for recursion.
-        - sep (str, optional): The separator between parent and child keys.
+        - parent_key (tuple, optional): The base key tuple for recursion.
     
         Returns:
-        - dict: A flattened dictionary.
+        - dict: A flattened dictionary with tuple keys.
         """
-        items = []
+        items = {}
         for k, v in d.items():
-            new_key = f"{parent_key}{sep}{k}" if parent_key else k
+            new_key = parent_key + (str(k),)
             if isinstance(v, MutableMapping):
-                items.extend(self._flatten_dict(v, new_key, sep=sep).items())
-            elif isinstance(v, list):
-                # Convert lists to strings or handle them as needed
-                items.append((new_key, v))
+                items.update(self._flatten_dict(v, new_key))
             else:
-                items.append((new_key, v))
-        return dict(items)
+                items[new_key] = v
+        return items
+
 
     
 
