@@ -989,16 +989,17 @@ class Star:
         epoch_key = f"epoch{epoch}"
     
         try:
-            fits_file = self.load_observation(epoch,band)
-            norm_data = self.load_property('norm_anchors_results',epoch,band)
+            # fits_file = self.load_observation(epoch,band)
+            norm_data = self.load_property('normalized_flux',epoch,band)
             # spectrum = self.normalized_spectra[epoch_key][band]
-            wavelength = fits_file.data['WAVE'][0]
+            # wavelength = fits_file.data['WAVE'][0]
+            wavelengths = norm_data['wavelengths']
             normalized_flux = norm_data['normalized_flux']
             # fitted_continuum = spectrum['fitted_continuum']
     
             plt.figure(figsize=(12, 6))
-            plt.plot(wavelength, normalized_flux, label='Normalized Flux', color='blue')
-            plt.plot(wavelength, normalized_flux / normalized_flux, '--', label='Fitted Continuum (Normalized)', color='red')
+            plt.plot(wavelengths, normalized_flux, label='Normalized Flux', color='blue')
+            plt.plot(wavelengths, normalized_flux / normalized_flux, '--', label='Fitted Continuum (Normalized)', color='red')
             plt.xlabel('Wavelength (nm)')
             plt.ylabel('Normalized Flux')
             plt.title(f'Normalized Spectrum for {self.star_name} - {epoch_key}  - {band}')
@@ -1226,15 +1227,7 @@ class Star:
                 uvb_snr = uvb_fits.data['SNR'][0]
                 uvb_red_flux = uvb_fits.data['FLUX_REDUCED'][0]
 
-                # # Combine the data
-                # combined_wave, combined_flux, combined_snr, combined_flux_reduced = self._combine_spectra(
-                #     [uvb_wave, vis_wave, nir_wave],
-                #     [uvb_flux, vis_flux, nir_flux],
-                #     [uvb_snr, vis_snr, nir_snr],
-                #     [nir_red_flux,vis_red_flux,uvb_red_flux]
-                # )
-
-                combined_wave, combined_flux, combined_snr, combined_flux_reduced,aligment_data = self._combine_spectra_tmp(
+                combined_wave, combined_flux, combined_snr, combined_flux_reduced,aligment_data = self._combine_spectra(
                     [uvb_wave, vis_wave, nir_wave],
                     [uvb_flux, vis_flux, nir_flux],
                     [uvb_snr, vis_snr, nir_snr],
@@ -1270,7 +1263,7 @@ class Star:
 
 ########################################                                   ########################################
 
-    def _combine_spectra_tmp(self, wave_list, flux_list, snr_list, flux_reduced_list,epoch_num):
+    def _combine_spectra(self, wave_list, flux_list, snr_list, flux_reduced_list,epoch_num):
         """
         Combine multiple spectra into a single spectrum by handling overlaps with different sampling,
         aligning mean fluxes before combination, and combining fluxes using the weighted SNR method.
@@ -1388,57 +1381,6 @@ class Star:
                 alignment_score = abs(mean_flux_combined - mean_flux_current) / np.sqrt(std_flux_combined**2 + std_flux_current**2)
                 alignment_score_interp = abs(mean_flux_finer - mean_flux_coarser) / np.sqrt(std_flux_finer**2 + std_flux_coarser**2)
     
-                # Calculate alignment factor and alignment score
-                # if mean_flux_finer >= mean_flux_coarser: # determines aligment factor, but which is finer now?
-                #     alignment_factor = mean_flux_finer / mean_flux_coarser
-                #     print(f'entered case where mean_flux_finer > mean_flux_coarser but is_finer_combined = {is_finer_combined}')
-                #     if is_finer_combined:
-                #         # Adjust current spectrum
-                #         flux_current *= alignment_factor
-                #         flux_reduced_current *= alignment_factor
-                #         snr_current *= alignment_factor
-
-                #     else: # coarser is the combined so 
-                #         # Adjust combined spectrum
-                #         combined_flux *= alignment_factor
-                #         combined_flux_reduced *= alignment_factor
-                #         combined_snr *= alignment_factor
-                        
-                #     # Recalculate interpolated fluxes after alignment
-                #     interp_flux_coarser = interp_flux_coarser * alignment_factor
-                #     interp_snr_coarser = interp_snr_coarser * alignment_factor
-                #     interp_flux_reduced_coarser = interp_flux_reduced_coarser * alignment_factor
-                # else:
-                #     alignment_factor = mean_flux_coarser / mean_flux_finer
-                #     print(f'entered case where mean_flux_finer <= mean_flux_coarser but is_finer_combined = {is_finer_combined}')
-                #     if is_finer_combined:
-                #         # Adjust combined spectrum
-                #         combined_flux *= alignment_factor
-                #         combined_flux_reduced *= alignment_factor
-                #         combined_snr *= alignment_factor
-
-                #     else:
-                #         # Adjust current spectrum
-                #         flux_current *= alignment_factor
-                #         flux_reduced_current *= alignment_factor
-                #         snr_current *= alignment_factor
-                    
-                #     flux_finer *= alignment_factor
-                #     flux_reduced_finer *= alignment_factor
-                #     snr_finer *= alignment_factor
-                    # # Recalculate interpolated fluxes after alignment
-                    # interp_flux_coarser = interp_flux_coarser * alignment_factor
-                    # interp_snr_coarser = interp_snr_coarser * alignment_factor
-                    # interp_flux_reduced_coarser = interp_flux_reduced_coarser * alignment_factor
-                    
-                
-                        
-                # Apply alignment factor to the entire coarser spectrum
-                # if delta_combined <= delta_current:
-                # else:
-    
-                
-    
                 # Combine fluxes using weighted SNR method
                 weights_finer = snr_finer ** 2
                 weights_coarser = interp_snr_coarser ** 2
@@ -1512,102 +1454,6 @@ class Star:
         
     
         return combined_wave, combined_flux, combined_snr, combined_flux_reduced,aligment_data
-
-
-
-########################################                                   ########################################
-    def _combine_spectra(self, wave_list, flux_list, snr_list, flux_reduced_list):
-        """
-        Combine multiple spectra into a single spectrum by averaging overlapping wavelengths.
-    
-        Parameters:
-        wave_list : list of numpy arrays
-            List containing wavelength arrays from different spectra.
-        flux_list : list of numpy arrays
-            List containing flux arrays corresponding to the wavelengths.
-        snr_list : list of numpy arrays
-            List containing SNR arrays corresponding to the wavelengths.
-        flux_reduced_list : list of numpy arrays
-            List containing FLUX_REDUCED arrays corresponding to the wavelengths.
-    
-        Returns:
-        combined_wave : numpy array
-            Combined wavelength array.
-        combined_flux : numpy array
-            Combined flux array.
-        combined_snr : numpy array
-            Combined SNR array.
-        combined_flux_reduced: numpy array
-            Combined FLUX_REDUCED array.
-        """
-    
-        # Concatenate all wavelengths, fluxes, and SNRs, and sort them by wavelength
-        combined_wave = np.concatenate(wave_list)
-        combined_flux = np.concatenate(flux_list)
-        combined_snr = np.concatenate(snr_list)
-        combined_flux_reduced = np.concatenate(flux_reduced_list)
-    
-        sorted_indices = np.argsort(combined_wave)
-        combined_wave_sorted = combined_wave[sorted_indices]
-        combined_flux_sorted = combined_flux[sorted_indices]
-        combined_snr_sorted = combined_snr[sorted_indices]
-        combined_flux_reduced_sorted = combined_flux_reduced[sorted_indices]
-    
-        # Initialize lists for the final combined data
-        final_wave = []
-        final_flux = []
-        final_snr = []
-        final_flux_reduced = []
-    
-        n = len(combined_wave_sorted)
-        i = 0
-        while i < n:
-            # Start of a new group (cluster of overlapping wavelengths)
-            cluster_waves = [np.round(combined_wave_sorted[i],2)]
-            cluster_fluxes = [combined_flux_sorted[i]]
-            cluster_snrs = [combined_snr_sorted[i]]
-            cluster_flux_reduced = [combined_flux_reduced_sorted[i]]
-            current_wave = np.round(combined_wave_sorted[i],2)
-    
-            i += 1
-            # Collect all wavelengths within 0.02 nm of the current wavelength
-            while i < n-1 and np.round(combined_wave_sorted[i]- current_wave,2)  < 0.02:
-                cluster_waves.append(np.round(combined_wave_sorted[i],2))
-                cluster_fluxes.append(combined_flux_sorted[i])
-                cluster_snrs.append(combined_snr_sorted[i])
-                cluster_flux_reduced.append(combined_flux_reduced_sorted[i])
-                i += 1
-                break
-    
-            # Calculate the mean wavelength of the cluster
-            mean_wave = np.mean(cluster_waves)
-    
-            # Compute combined flux and SNR for the cluster
-            if len(cluster_fluxes) == 1:
-                combined_flux = cluster_fluxes[0]
-                combined_snr = cluster_snrs[0]
-                combined_flux_reduced = cluster_flux_reduced[0]
-            else:
-                # Weights are proportional to SNR squared
-                weights = np.array(cluster_snrs) ** 2
-                total_weight = np.sum(weights)
-                combined_flux = np.sum(np.array(cluster_fluxes) * weights) / total_weight
-                combined_snr = np.sqrt(np.sum(weights))
-                combined_flux_reduced = np.sum(np.array(cluster_flux_reduced) * weights) / total_weight
-    
-            # Append the combined data to the final lists
-            final_wave.append(mean_wave)
-            final_flux.append(combined_flux)
-            final_snr.append(combined_snr)
-            final_flux_reduced.append(combined_flux_reduced)
-    
-        # Convert lists to numpy arrays
-        combined_wave_array = np.array(final_wave)
-        combined_flux_array = np.array(final_flux)
-        combined_snr_array = np.array(final_snr)
-        combined_flux_reduced_array = np.array(final_flux_reduced)
-    
-        return combined_wave_array, combined_flux_array, combined_snr_array, combined_flux_reduced_array
 
 ########################################                                   ########################################
 
