@@ -1011,6 +1011,9 @@ class Star:
         except Exception as e:
             print(f"Error plotting spectrum: {e}")
 
+
+########################################                                       ########################################
+
     def plot_2D_image(self,epoch_num,band,title='', ValMin=None, ValMax=None,norm = False):
         fits_file_1D = self.load_observation(epoch_num,band)
         wavelengths = fits_file_1D.data['WAVE'][0]
@@ -1189,14 +1192,6 @@ class Star:
 
     def combine_fits_files(self, epoch_num=None,band = None,overwrite = False, backup = False, save = False):
         try:
-            # Determine which epochs to process
-            # if epoch_num is None:
-            #     epoch_num = [int(num[-1]) for num in self.observation_dict.keys()]
-            #     print(epoch_num)
-            #     # epoch_nums = [int(d.split('_')[1]) for d in epoch_dirs]
-            # elif isinstance(epoch_num, int):
-            #     epoch_num = [epoch_num]
-    
             # for epoch_num in epoch_nums:
             try:
                 # Load observations
@@ -1536,9 +1531,134 @@ class Star:
     #     CCF = CCFclass(
 
 
-########################################                                ########################################
+########################################                cleaning data using 2D images                ########################################
+
+    def clean_flux_and_normalize(self, epoch_num, band, bottom_spacial=None, top_spacial=None):
+        """
+        Cleans the 2D flux image, normalizes the flux, and compares with external normalized data.
+    
+        Parameters:
+            epoch_num: int, the epoch number for the observation
+            band: str, the band of the observation (e.g., 'VIS', 'UVB', etc.)
+        """
+        # Load the 2D image
+        fits_file_2D = self.load_2D_observation(epoch_num, band)
+        image_data = fits_file_2D.primary_data
+    
+        # Automatically detect the top and bottom spacial limits if not provided
+        def detect_spatial_limits(image_data, threshold=0.5):
+            """
+            Automatically detect top and bottom boundaries based on flux changes.
+    
+            Parameters:
+                image_data: 2D numpy array, the flux image data
+                threshold: float, gradient threshold to detect boundaries
+    
+            Returns:
+                tuple: (bottom_spacial, top_spacial) indices
+            """
+            vertical_flux = np.sum(image_data, axis=1)  # Sum flux along the horizontal axis
+            gradient = np.gradient(vertical_flux)
+            large_changes = np.where(np.abs(gradient) > threshold)[0]
+            if len(large_changes) >= 2:
+                return large_changes[0] + 1, large_changes[-1] - 1
+            else:
+                raise ValueError("Unable to detect spatial limits automatically.")
+    
+        # Detect spatial limits
+        bottom_spacial, top_spacial = detect_spatial_limits(image_data)
+    
+        # Crop the image to the middle region
+        image_data_central = image_data[bottom_spacial:top_spacial, :]
+    
+        # Sum the flux along the columns
+        summed_flux = np.sum(image_data_central, axis=0)
+    
+        # Load anchor points for normalization
+        anchor_points = self.load_property('norm_anchor_wavelengths', epoch_num, band='COMBINED')
+    
+        # Get wavelengths from the 2D data
+        fits_file_1D = self.load_observation(epoch_num, band)
+        wavelengths_2D = fits_file_1D.data['WAVE'][0]
+    
+        # Restrict anchor points to the 2D image's wavelength range
+        anchor_points_in_range = anchor_points[
+            (anchor_points >= wavelengths_2D.min()) & (anchor_points <= wavelengths_2D.max())
+        ]
+
+        # Filter anchor points and select corresponding flux
+        mask_anchor_points = np.isin(wavelengths_2D, anchor_points_in_range)
+        anchor_points_in_range2 = wavelengths_2D[mask_anchor_points]
+        print(f'mask is: {mask_anchor_points}')
+        print(f'anchor points in ragne are: {anchor_points_in_range}')
+        print(f'anchor points in range2 are: {anchor_points_in_range2}')
+        closest_indices = [np.abs(wavelengths_2D - ap).argmin() for ap in anchor_points_in_range]
+        selected_flux = summed_flux[closest_indices]  # Match flux to anchor points
+        # selected_flux = summed_flux[mask_anchor_points]  # Match flux to anchor points
+        print(f' selected flux is: {selected_flux}')
+
+        if len(selected_flux) != len(anchor_points_in_range):
+            print(f'len of selected_flux is: {len(selected_flux)} and of anchor_points_in_range is: {len(anchor_points_in_range)}')
+            raise ValueError("Mismatch between selected_flux and anchor_points sizes.")
 
     
+        # Interpolate the continuum flux for the entire wavelength range of the 2D image
+        continuum_flux_interpolated = np.interp(wavelengths_2D, anchor_points_in_range, selected_flux)
+    
+        # Normalize the summed flux using the interpolated continuum flux
+        normalized_summed_flux = summed_flux / continuum_flux_interpolated
+    
+        # Load external normalized flux for comparison (same band)
+        external_data = self.load_property('normalized_flux', epoch_num, band='COMBINED')
+        external_normalized_flux = external_data['normalized_flux']
+        external_wavelengths = external_data['wavelengths']
+    
+        # Filter external data to match the wavelength range of the 2D band
+        mask_relevant_band = (external_wavelengths >= wavelengths_2D.min()) & (external_wavelengths <= wavelengths_2D.max())
+        external_wavelengths_band = external_wavelengths[mask_relevant_band]
+        external_normalized_flux_band = external_normalized_flux[mask_relevant_band]
+    
+        # Plot the results
+        plt.figure(figsize=(12, 6))
+        plt.plot(wavelengths_2D, normalized_summed_flux, label='Normalized Summed Flux (2D Image)', color='blue')
+        plt.plot(
+            external_wavelengths_band, external_normalized_flux_band,
+            label='External Normalized Flux (Relevant Band)', color='orange', alpha=0.7
+        )
+        plt.xlabel('Wavelength (nm)')
+        plt.ylabel('Normalized Flux')
+        plt.title(f'Normalized Flux Comparison for {band} (Epoch {epoch_num})')
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+
+                # Calculate the difference and relative difference
+        flux_difference = normalized_summed_flux - external_normalized_flux_band
+        relative_difference = flux_difference / external_normalized_flux_band
+
+        # Plot the differences
+        plt.figure(figsize=(12, 6))
+        plt.plot(wavelengths_2D, flux_difference, label='Flux Difference', color='red')
+        plt.xlabel('Wavelength (nm)')
+        plt.ylabel('Flux Difference')
+        plt.title(f'Flux Difference (Normalized Summed Flux - External) for {band} (Epoch {epoch_num})')
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+
+        # Plot the relative differences
+        plt.figure(figsize=(12, 6))
+        plt.plot(wavelengths_2D, relative_difference, label='Relative Difference', color='purple')
+        plt.xlabel('Wavelength (nm)')
+        plt.ylabel('Relative Difference')
+        plt.title(f'Relative Flux Difference (Diff / External Flux) for {band} (Epoch {epoch_num})')
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+
+    
+        return normalized_summed_flux, wavelengths_2D, (bottom_spacial, top_spacial)
+
 
     
 
