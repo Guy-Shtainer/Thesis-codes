@@ -40,7 +40,13 @@ PATH_TO_OBS = f'../RawData/archive/ADP.2020-11-13T12:33:07.692.fits'
 
 # image_data = fits.getdata(PATH_TO_OBS, ext=0)
 
-def Plot2DImage(image_data,wavelengths, title='', ValMin=None, ValMax=None,norm = False):
+def Plot2DImage(image_data,wavelengths,band, title='', ValMin=None, ValMax=None,norm = False):
+    if band == 'NIR':
+        image_data = image_data[-52:-24,:]
+    else:
+        # image_data = image_data[-68:-30,:]
+        print('see all')
+    print(f'spacial axis has {len(image_data[:,1])} items')
     # Filter out non-positive values for LogNorm
     positive_data = image_data[image_data > 0]
 
@@ -59,7 +65,6 @@ def Plot2DImage(image_data,wavelengths, title='', ValMin=None, ValMax=None,norm 
 
     # Create LogNorm with the validated ValMin and ValMax
     if norm:
-        print('ok')
         ValMin = np.amin(positive_data) if ValMin is None else ValMin
         ValMax = np.amax(positive_data) if ValMax is None else ValMax
         norm = mcolors.LogNorm(vmin=ValMin, vmax=ValMax)
@@ -92,7 +97,7 @@ def get_key_from_header(infile, key, ext=0):
 
 # ------------------------ PLOTS --------------------------------
 
-#Plot image and extract wavelength grid and total flux
+# Plot image and extract wavelength grid and total flux
 # WaveGrid, TotFlux = Plot2DImage(image_data)
 
 

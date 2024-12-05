@@ -29,6 +29,7 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
     """
     current_epoch_idx = 0  # To keep track of the current epoch index
     navigation_choice = "finish"  # Default navigation choice if no button is pressed
+    mean_flux_half_batch_size = 10
 
     # Initialize variables to store data
     wavelength = None
@@ -76,7 +77,12 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
         ax1.clear()
         ax1.plot(wavelength, flux, '.', color='gray', markersize=2, label='Data')
         if selected_wavelengths_tmp:
-            selected_fluxes_current_epoch = np.interp(selected_wavelengths_tmp, wavelength, flux)
+            # selected_fluxes_current_epoch = np.interp(selected_wavelengths_tmp, wavelength, flux)
+            tolerance = 0.001
+            selected_wavelengths_tmp_index = np.where(
+                np.any(np.abs(wavelength[:, None] - selected_wavelengths_tmp) <= tolerance, axis=1)
+            )[0]
+            selected_fluxes_current_epoch = [ut.robust_mean(flux[selected_wave_index -mean_flux_half_batch_size:selected_wave_index+mean_flux_half_batch_size]) for selected_wave_index in selected_wavelengths_tmp_index]
             ax1.plot(selected_wavelengths_tmp, selected_fluxes_current_epoch, 'o', color='red', markersize=5, label='Selected Points')
         ax1.set_ylabel('Flux')
         ax1.set_title(f'Interactive Normalization - Star: {star.star_name}, Epoch: {epoch_numbers[current_epoch_idx]}, Band: {band}')
@@ -97,7 +103,12 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
         ax_mid.clear()
         ax_mid.plot(wavelength, flux, '.', color='gray', markersize=2, label='Data')
         if len(selected_wavelengths_tmp) >= 2:
-            selected_fluxes_current_epoch = np.interp(selected_wavelengths_tmp, wavelength, flux)
+            # selected_fluxes_current_epoch = np.interp(selected_wavelengths_tmp, wavelength, flux)
+            tolerance = 0.001
+            selected_wavelengths_tmp_index = np.where(
+                np.any(np.abs(wavelength[:, None] - selected_wavelengths_tmp) <= tolerance, axis=1)
+            )[0]
+            selected_fluxes_current_epoch = [ut.robust_mean(flux[selected_wave_index -mean_flux_half_batch_size:selected_wave_index+mean_flux_half_batch_size]) for selected_wave_index in selected_wavelengths_tmp_index]
             sorted_indices = np.argsort(selected_wavelengths_tmp)
             selected_wavelengths_sorted = np.array(selected_wavelengths_tmp)[sorted_indices]
             selected_fluxes_sorted = np.array(selected_fluxes_current_epoch)[sorted_indices]
@@ -121,7 +132,16 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
             ylim2 = ax2.get_ylim()
         ax2.clear()
         if len(selected_wavelengths_tmp) >= 2:
-            selected_fluxes_current_epoch = np.interp(selected_wavelengths_tmp, wavelength, flux)
+            # selected_fluxes_current_epoch = np.interp(selected_wavelengths_tmp, wavelength, flux)
+
+            tolerance = 0.001
+            selected_wavelengths_tmp_index = np.where(
+                np.any(np.abs(wavelength[:, None] - selected_wavelengths_tmp) <= tolerance, axis=1)
+            )[0]
+
+            # selected_wavelengths_tmp_index = np.where(np.isin(wavelength,selected_wavelengths_tmp))[0]
+            # print(f'len of selected_wavelengths_tmp is {len(selected_wavelengths_tmp)} and for selected_wavelengths_tmp_index is {len(selected_wavelengths_tmp_index)}')
+            selected_fluxes_current_epoch = [ut.robust_mean(flux[selected_wave_index - mean_flux_half_batch_size:selected_wave_index+mean_flux_half_batch_size]) for selected_wave_index in selected_wavelengths_tmp_index]
             sorted_indices = np.argsort(selected_wavelengths_tmp)
             selected_wavelengths_sorted = np.array(selected_wavelengths_tmp)[sorted_indices]
             selected_fluxes_sorted = np.array(selected_fluxes_current_epoch)[sorted_indices]
@@ -186,6 +206,7 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
             x_diff = np.abs(selected_wavelengths - press_event['x'])
             y_diff = np.abs(selected_fluxes - press_event['y'])
             within_threshold = (x_diff < x_threshold) & (y_diff < y_threshold)
+            within_threshold = (x_diff < x_threshold)
             if not np.any(within_threshold):
                 print(f'Found no near point')
                 return
@@ -269,7 +290,12 @@ def interactive_normalization(star, epoch_numbers, band='COMBINED', filter_func=
             fits_file = star.load_observation(epoch_number, band)
             wavelength_epoch = fits_file.data['WAVE'][0]
             flux_epoch = fits_file.data['FLUX'][0]
-            selected_fluxes_epoch = np.interp(selected_wavelengths_tmp, wavelength_epoch, flux_epoch)
+            # selected_fluxes_epoch = np.interp(selected_wavelengths_tmp, wavelength_epoch, flux_epoch)
+            tolerance = 0.001
+            selected_wavelengths_tmp_index = np.where(
+                np.any(np.abs(wavelength[:, None] - selected_wavelengths_tmp) <= tolerance, axis=1)
+            )[0]
+            selected_fluxes_epoch = np.array([ut.robust_mean(flux_epoch[selected_wave_index -mean_flux_half_batch_size:selected_wave_index+mean_flux_half_batch_size]) for selected_wave_index in selected_wavelengths_tmp_index])
             sorted_indices = np.argsort(selected_wavelengths_tmp)
             selected_wavelengths_epoch = np.array(selected_wavelengths_tmp)[sorted_indices]
             selected_fluxes_epoch = selected_fluxes_epoch[sorted_indices]

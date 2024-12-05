@@ -6,7 +6,7 @@ clight = 2.9979E5  # [km/s]
 eps = 1E-10
 
 class CCFclass:
-    def __init__(self, intr_kind='cubic', Fit_Range_in_fraction=0.95, CrossCorRangeA=[[4000., 5000.]],
+    def __init__(self, intr_kind='cubic', Fit_Range_in_fraction=0.95, CrossCorRangeA=[[400., 500.]],
                  CrossVeloMin=-400., CrossVeloMax=400., PlotFirst=True, PlotAll=False):
         # Determines type of interpolation when reading spectra: should not be changed
         self.intr_kind = intr_kind
@@ -26,7 +26,9 @@ class CCFclass:
 
     # Returns CCF of two functions f1(x) and f2(x) [f1 = observation, f2 = mask]
     def CCF(self, f1, f2, N):
-        return np.sum(f1 * f2) / (np.std(f1) * np.std(f2) * N)
+        f1 = f1
+        f2 = f2
+        return np.sum(f1 * f2) / np.std(f1) / np.std(f2) / N
 
     # Returns RV and error following Zucker+ 2003
     def crosscorreal(self, Observation, Mask, CrossCorInds, sRange, N, veloRange, wavegridlog):
@@ -53,6 +55,7 @@ class CCFclass:
             # plot the ccf
             fig1, ax1 = plt.subplots()
             ax1.plot(veloRange, CCFarr, color='C0')
+            # ax1.scatter(veloRange, CCFarr, color='C0')
             FineVeloGrid = np.arange(veloRange[IndFit1], veloRange[IndFit2], 0.1)
             parable = a * FineVeloGrid**2 + b * FineVeloGrid + c
             ax1.plot(FineVeloGrid, parable, color='C1', linewidth=1.5)
@@ -114,9 +117,12 @@ class CCFclass:
         interp_obs_flux = interp1d(log_obs_wave, observation_flux, bounds_error=False, fill_value=1.0, kind=self.intr_kind)(log_wavegrid)
         interp_temp_flux = interp1d(log_temp_wave, template_flux, bounds_error=False, fill_value=1.0, kind=self.intr_kind)(log_wavegrid)
 
+        # print(f'interp_obs_flux len is: {len(interp_obs_flux)} and interp_temp_flux len is {len(interp_temp_flux)}')
         # Subtract mean
         obs_flux_norm = interp_obs_flux - np.mean(interp_obs_flux)
         temp_flux_norm = interp_temp_flux - np.mean(interp_temp_flux)
+        # obs_flux_norm = interp_obs_flux
+        # temp_flux_norm = interp_temp_flux
 
         # Define CrossCorInds
         CrossCorInds_list = []
@@ -134,6 +140,8 @@ class CCFclass:
         # Define sRange and veloRange
         sRange = np.arange(int(self.CrossVeloMin/vbin), int(self.CrossVeloMax/vbin)+1, 1)
         veloRange = vbin * sRange
+
+        # print(f'obs_flux_norm len is: {len(obs_flux_norm)} and temp_flux_norm len is {len(temp_flux_norm)}')
 
         # Perform cross-correlation
         CCFeval = self.crosscorreal(obs_flux_norm, temp_flux_norm, CrossCorInds, sRange, N, veloRange, log_wavegrid)

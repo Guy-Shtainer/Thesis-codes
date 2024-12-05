@@ -4,6 +4,8 @@ import numpy as np
 class FITSFile:
     def __init__(self, filepath):
         self.filepath = filepath
+        self.primary_data = None
+        self.raw_data = None
         self.data = None
         self.dataheader = None
         self.header = None
@@ -12,6 +14,8 @@ class FITSFile:
         """Load data and header from the FITS file."""
         try:
             with fits.open(self.filepath) as hdulist:
+                self.primary_data = hdulist[0].data
+                self.raw_data = hdulist[1]
                 self.data = hdulist[1].data
                 self.dataheader = hdulist[1].header
                 self.header = hdulist[0].header
