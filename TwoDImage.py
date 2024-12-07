@@ -40,12 +40,13 @@ PATH_TO_OBS = f'../RawData/archive/ADP.2020-11-13T12:33:07.692.fits'
 
 # image_data = fits.getdata(PATH_TO_OBS, ext=0)
 
-def Plot2DImage(image_data,wavelengths,band, title='', ValMin=None, ValMax=None,norm = False):
-    if band == 'NIR':
-        image_data = image_data[-52:-24,:]
-    else:
-        # image_data = image_data[-68:-30,:]
-        print('see all')
+def Plot2DImage(image_data,wavelengths,band, title='', ValMin=None, ValMax=None,norm = False,see_all = False):
+    if not see_all:
+        if band == 'NIR':
+            image_data = image_data[-52:-24,:]
+        else:
+            image_data = image_data[-68:-30,:]
+
     print(f'spacial axis has {len(image_data[:,1])} items')
     # Filter out non-positive values for LogNorm
     positive_data = image_data[image_data > 0]

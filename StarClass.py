@@ -849,18 +849,24 @@ class Star:
 
         # Loop over combinations and plot
         for epoch_num, band in combinations:
-            epoch_str = f'epoch{epoch_num}'
             try:
                 fits_file = self.load_observation(epoch_num, band=band)
                 data = fits_file.data
                 wavelength = data['WAVE'][0]
                 flux = data['FLUX'][0]
 
+                if band == 'UVB':
+                    color = 'blue'
+                elif band == 'VIS':
+                    color = 'green'
+                elif band == 'NIR':
+                    color = 'red'
+
                 # Plot the spectrum
                 if scatter:
                     plt.scatter(wavelength, flux, label=f'Epoch {epoch_num}, Band {band}', linewidth = linewidth)
                 else:
-                    plt.plot(wavelength, flux, label=f'Epoch {epoch_num}, Band {band}', linewidth = linewidth)
+                    plt.plot(wavelength, flux, label=f'Epoch {epoch_num}, Band {band}', linewidth = linewidth, color = color)
 
             except Exception as e:
                 print(f"Error reading FITS file '{fits_file}': {e}")
@@ -1018,12 +1024,12 @@ class Star:
 
 ########################################                                       ########################################
 
-    def plot_2D_image(self,epoch_num,band,title='', ValMin=None, ValMax=None,norm = False):
+    def plot_2D_image(self,epoch_num,band,title='', ValMin=None, ValMax=None,norm = False,see_all = False):
         fits_file_1D = self.load_observation(epoch_num,band)
         wavelengths = fits_file_1D.data['WAVE'][0]
         fits_file_2D = self.load_2D_observation(epoch_num,band)
         image_data = fits_file_2D.primary_data
-        p2D.Plot2DImage(image_data,wavelengths,band, title=title, ValMin=ValMin, ValMax=ValMax,norm = norm)
+        p2D.Plot2DImage(image_data,wavelengths,band, title=title, ValMin=ValMin, ValMax=ValMax,norm = norm,see_all = see_all)
     
 
 ########################################                 Method Executer                      ########################################
