@@ -1024,15 +1024,56 @@ class Star:
 
 ########################################                                       ########################################
 
-    def plot_2D_image(self,epoch_num,band,title='', ValMin=None, ValMax=None,norm = False,see_all = False):
-        fits_file_1D = self.load_observation(epoch_num,band)
-        wavelengths = fits_file_1D.data['WAVE'][0]
-        fits_file_2D = self.load_2D_observation(epoch_num,band)
-        image_data = fits_file_2D.primary_data
-        p2D.Plot2DImage(image_data,wavelengths,band, title=title, ValMin=ValMin, ValMax=ValMax,norm = norm,see_all = see_all)
-    
+    def plot_2D_image(self, epoch_num, band, title='', ValMin=None, ValMax=None, norm=False, see_all=False):
+        """
+        Plots a 2D spectral image for a given observation epoch and band.
 
-########################################                 Method Executer                      ########################################
+        Parameters:
+        ----------
+        epoch_num : int
+            The observation epoch number to load the data from.
+        band : str
+            The spectral band for which the image is plotted (e.g., 'VIS', 'NIR').
+        title : str, optional
+            Title of the plot. If not provided, an automatic title is generated.
+        ValMin : float, optional
+            Minimum value for the image display scale. Defaults to None.
+        ValMax : float, optional
+            Maximum value for the image display scale. Defaults to None.
+        norm : bool, optional
+            If True, normalizes the image data. Defaults to False.
+        see_all : bool, optional
+            If True, displays the full image view. Defaults to False.
+
+        Description:
+        ------------
+        This method retrieves the 2D observation data and wavelength information
+        for the given epoch and band. It then generates a 2D image plot using the
+        custom plotting utility. The title and display range can be customized.
+        """
+        # Load observation data
+        fits_file_1D = self.load_observation(epoch_num, band)
+        wavelengths = fits_file_1D.data['WAVE'][0]
+        fits_file_2D = self.load_2D_observation(epoch_num, band)
+        image_data = fits_file_2D.primary_data
+
+        # Automatically generate title if not provided
+        if not title:
+            title = f"2D Image Plot for {self.star_name} (Epoch {epoch_num}, Band {band})"
+
+        # Plot the 2D image
+        p2D.Plot2DImage(
+            image_data,
+            wavelengths,
+            band,
+            title=title,
+            ValMin=ValMin,
+            ValMax=ValMax,
+            norm=norm,
+            see_all=see_all
+        )
+
+    ########################################                 Method Executer                      ########################################
     
     def execute_method(self, method, params={}, epoch_numbers=None, bands=None, overwrite=False, backup=True, save = True, parallel=False, max_workers=None):
         """
