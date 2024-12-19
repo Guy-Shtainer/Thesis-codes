@@ -6,6 +6,9 @@ import pandas as pd
 import numpy as np
 from scipy.interpolate import UnivariateSpline
 import matplotlib.pyplot as plt
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.widgets import Slider, Button
 import utils as ut
 from IPython.display import display
 from astropy.io import fits
@@ -13,6 +16,10 @@ from threading import Thread
 import multiprocess
 from itertools import product
 from functools import partial
+from tabulate import tabulate
+from astroquery.simbad import Simbad
+from astroquery.vizier import Vizier
+from astroquery.gaia import Gaia
 
 #Tomers tools
 from CCF import CCFclass
@@ -22,6 +29,10 @@ import TwoDImage as p2D
 # My tools
 import specs
 from FitsClass import FITSFile as myfits 
+# import sys
+
+# Assume catalogs.py is available and contains dictionaries named after catalogs
+import catalogs
 
 #SIMBAD
 import requests
@@ -90,7 +101,9 @@ class Star:
                 num += 1
                 filename = filename[:-15] + ':' + filename[-14:-12] + ':' + filename[-11:-8] + f'{num}'.zfill(3) + '.fits'
                 fits_directory = os.path.join(self.data_dir, self.star_name, f'epoch{epoch_number}', band, '2D image')
+                print(fits_directory)
                 fits_file = glob.glob(os.path.join(fits_directory, '**', '*.fits'), recursive=True)
+                print(fits_file)
                 return fits_file[0]
                 return os.path.join(self.data_dir, self.star_name, f'epoch{epoch_number}', band, '2D image',filename)
         else:
@@ -1239,7 +1252,7 @@ class Star:
             print(f"BAT99 identifier not found. The indexes were: {index} and {index2}. It found {BAT_num}")
             return None
 
-########################################                SIMABD                   ########################################
+########################################                SIMABD & Others                   ########################################
 
     def get_spectral_type(self):
         """
@@ -1288,8 +1301,316 @@ class Star:
             return None
 
 
+########################################                                   ########################################
 
-########################################                Combined Spectra                   ########################################
+    def get_catalogs_data(self, queries, catalogs_list=None):
+        # Normalize queries input
+        if isinstance(queries, str):
+            queries = [queries]
+    
+        # Use the catalogs list from catalogs.py if no custom list is provided
+        if catalogs_list is None:
+            selected_catalogs = catalogs.catalogs[:]  # make a copy of the list
+        else:
+            if isinstance(catalogs_list, str):
+                catalogs_list = [catalogs_list]
+            # Filter to ensure we only keep the catalogs that exist in catalogs.py
+            selected_catalogs = [c for c in catalogs_list if c in catalogs.catalogs]
+            if len(selected_catalogs) < len(catalogs_list):
+                missing = set(catalogs_list) - set(selected_catalogs)
+                print(f"The following catalogs were not found: {missing}")
+                print("Available catalogs are:")
+                for cat in catalogs.catalogs:
+                    print(f" - {cat}")
+    
+        results = []  # Will store (Catalog, Query_Key, Query_Value)
+    
+        # Handle SIMBAD queries
+        if "SIMBAD" in selected_catalogs:
+            Simbad.reset_votable_fields()
+            simbad_fields = catalogs.SIMBAD.keys()  # Get available fields from catalogs.py
+            for q in queries:
+                if q in simbad_fields:
+                    Simbad.add_votable_fields(q)
+                else:
+                    print(f"Query '{q}' is not recognized by SIMBAD. Available fields:")
+                    for i, field in enumerate(simbad_fields, start=1):
+                        print(f"{i}. {field}")
+                    print("0. Skip this query")
+                    user_in = input("Enter the number of the query to use, or 0 to skip: ")
+                    try:
+                        choice = int(user_in)
+                    except ValueError:
+                        choice = 0
+                    if choice == 0:
+                        print(f"Skipping query '{q}' for SIMBAD.")
+                    elif 1 <= choice <= len(simbad_fields):
+                        chosen_field = list(simbad_fields)[choice - 1]
+                        Simbad.add_votable_fields(chosen_field)
+                        queries[queries.index(q)] = chosen_field  # Update the query to the chosen field
+                    else:
+                        print("Invalid choice. Skipping this query for SIMBAD.")
+    
+            try:
+                sim_res = Simbad.query_object(self.star_name)
+                if sim_res is None or len(sim_res) == 0:
+                    print(f"Star {self.star_name} not found in SIMBAD.")
+                else:
+                    for q in queries:
+                        if q in sim_res.colnames:
+                            value = sim_res[q][0]
+                            results.append(("SIMBAD", q, value))
+                        else:
+                            print(f"Query '{q}' not found in SIMBAD response.")
+            except Exception as e:
+                print(f"Error querying SIMBAD: {e}")
+    
+            # Remove SIMBAD from the selected catalogs after processing
+            selected_catalogs.remove("SIMBAD")
+    
+        # Handle Vizier queries
+        viz = Vizier(row_limit=-1)
+        for cat in selected_catalogs:
+            try:
+                viz_res = viz.query_object(self.star_name, catalog=cat)
+                if viz_res is None or len(viz_res) == 0:
+                    print(f"No results found for {self.star_name} in {cat}.")
+                    continue
+    
+                table = viz_res[0]
+                for q in queries:
+                    if q in table.colnames:
+                        value = table[q][0] if len(table) > 0 else None
+                        results.append((cat, q, value))
+                    else:
+                        print(f"Query '{q}' not found in {cat}. Available fields:")
+                        for i, field in enumerate(table.colnames, start=1):
+                            print(f"{i}. {field}")
+                        print("0. Skip this query")
+                        user_in = input("Enter the number of the query to use, or 0 to skip: ")
+                        try:
+                            choice = int(user_in)
+                        except ValueError:
+                            choice = 0
+                        if choice == 0:
+                            print(f"Skipping this query in {cat}.")
+                        elif 1 <= choice <= len(table.colnames):
+                            chosen_query = table.colnames[choice - 1]
+                            value = table[chosen_query][0] if len(table) > 0 else None
+                            results.append((cat, chosen_query, value))
+                        else:
+                            print("Invalid choice. Skipping this query in {cat}.")
+            except Exception as e:
+                print(f"Error querying VizieR catalog {cat}: {e}")
+    
+        # Handle Gaia queries (I_355_GAIADR3)
+        if "I_355_GAIADR3" in selected_catalogs:
+            gaia_fields = catalogs.I_355_GAIADR3.keys()  # Get available fields from catalogs.py
+            valid_queries = []
+            for q in queries:
+                if q in gaia_fields:
+                    valid_queries.append(q)
+                else:
+                    print(f"Query '{q}' is not recognized by GAIA. Available fields:")
+                    for i, field in enumerate(gaia_fields, start=1):
+                        print(f"{i}. {field}")
+                    print("0. Skip this query")
+                    user_in = input("Enter the number of the query to use, or 0 to skip: ")
+                    try:
+                        choice = int(user_in)
+                    except ValueError:
+                        choice = 0
+                    if choice == 0:
+                        print(f"Skipping query '{q}' for GAIA.")
+                    elif 1 <= choice <= len(gaia_fields):
+                        chosen_field = list(gaia_fields)[choice - 1]
+                        valid_queries.append(chosen_field)
+                    else:
+                        print("Invalid choice. Skipping this query for GAIA.")
+    
+            if valid_queries:
+                try:
+                    gaia_query = f"SELECT {', '.join(valid_queries)} FROM gaiadr3.gaia_source WHERE source_id = {self.star_name}"
+                    gaia_job = Gaia.launch_job(gaia_query)
+                    gaia_res = gaia_job.get_results()
+                    if gaia_res is None or len(gaia_res) == 0:
+                        print(f"No results found for {self.star_name} in Gaia.")
+                    else:
+                        for q in valid_queries:
+                            if q in gaia_res.colnames:
+                                value = gaia_res[q][0]
+                                results.append(("I_355_GAIADR3", q, value))
+                except Exception as e:
+                    print(f"Error querying Gaia: {e}")
+    
+        # Now we have a list of (Catalog, Query_Key, Query_Value)
+        # Print a table with star name, catalog, query key, and value
+        if results:
+            df = pd.DataFrame(results, columns=["Catalog", "Query Key", "Query Value"])
+            df.insert(0, "Star Name", self.star_name)
+            print(tabulate(df, headers="keys", tablefmt="pretty"))
+        else:
+            print("No queries were resolved.")
+
+    def get_catalogs_data2(self, queries, catalogs_list=None):
+        # Normalize queries input
+        if isinstance(queries, str):
+            queries = [queries]
+    
+        # Use the catalogs list from catalogs.py if no custom list is provided
+        if catalogs_list is None:
+            selected_catalogs = catalogs.catalogs[:]  # make a copy of the list
+        else:
+            if isinstance(catalogs_list, str):
+                catalogs_list = [catalogs_list]
+            # Filter to ensure we only keep the catalogs that exist in catalogs.py
+            selected_catalogs = [c for c in catalogs_list if c in catalogs.catalogs]
+            if len(selected_catalogs) < len(catalogs_list):
+                missing = set(catalogs_list) - set(selected_catalogs)
+                print(f"The following catalogs were not found: {missing}")
+                print("Available catalogs are:")
+                for cat in catalogs.catalogs:
+                    print(f" - {cat}")
+    
+        results = []  # Will store (Catalog, Query_Key, Query_Value)
+    
+        # Handle SIMBAD queries
+        if "SIMBAD" in selected_catalogs:
+            # Create a custom Simbad instance
+            custom_simbad = Simbad()
+            simbad_fields = catalogs.SIMBAD.keys()  # Get available fields from catalogs.py
+    
+            # Add fields from queries
+            valid_queries = []
+            for q in queries:
+                if q.lower() == "sptype":  # Special handling for spectral type
+                    custom_simbad.add_votable_fields("sptype")
+                    valid_queries.append("SP_TYPE")
+                elif q in simbad_fields:
+                    custom_simbad.add_votable_fields(q)
+                    valid_queries.append(q)
+                else:
+                    print(f"Query '{q}' is not recognized by SIMBAD. Available fields:")
+                    for i, field in enumerate(simbad_fields, start=1):
+                        print(f"{i}. {field}")
+                    print("0. Skip this query")
+                    user_in = input("Enter the number of the query to use, or 0 to skip: ")
+                    try:
+                        choice = int(user_in)
+                    except ValueError:
+                        choice = 0
+                    if choice == 0:
+                        print(f"Skipping query '{q}' for SIMBAD.")
+                    elif 1 <= choice <= len(simbad_fields):
+                        chosen_field = list(simbad_fields)[choice - 1]
+                        custom_simbad.add_votable_fields(chosen_field)
+                        valid_queries.append(chosen_field)
+                    else:
+                        print("Invalid choice. Skipping this query for SIMBAD.")
+    
+            # Query SIMBAD
+            try:
+                sim_res = custom_simbad.query_object(self.star_name)
+                if sim_res is None or len(sim_res) == 0:
+                    print(f"Star {self.star_name} not found in SIMBAD.")
+                else:
+                    for q in valid_queries:
+                        if q in sim_res.colnames:
+                            value = sim_res[q][0]
+                            results.append(("SIMBAD", q, value))
+                        else:
+                            print(f"Query '{q}' not found in SIMBAD response.")
+            except Exception as e:
+                print(f"Error querying SIMBAD: {e}")
+    
+            # Remove SIMBAD from the selected catalogs after processing
+            selected_catalogs.remove("SIMBAD")
+    
+        # Handle Vizier queries
+        viz = Vizier(row_limit=-1)
+        for cat in selected_catalogs:
+            try:
+                viz_res = viz.query_object(self.star_name, catalog=cat)
+                if viz_res is None or len(viz_res) == 0:
+                    print(f"No results found for {self.star_name} in {cat}.")
+                    continue
+    
+                table = viz_res[0]
+                for q in queries:
+                    if q in table.colnames:
+                        value = table[q][0] if len(table) > 0 else None
+                        results.append((cat, q, value))
+                    else:
+                        print(f"Query '{q}' not found in {cat}. Available fields:")
+                        for i, field in enumerate(table.colnames, start=1):
+                            print(f"{i}. {field}")
+                        print("0. Skip this query")
+                        user_in = input("Enter the number of the query to use, or 0 to skip: ")
+                        try:
+                            choice = int(user_in)
+                        except ValueError:
+                            choice = 0
+                        if choice == 0:
+                            print(f"Skipping this query in {cat}.")
+                        elif 1 <= choice <= len(table.colnames):
+                            chosen_query = table.colnames[choice - 1]
+                            value = table[chosen_query][0] if len(table) > 0 else None
+                            results.append((cat, chosen_query, value))
+                        else:
+                            print("Invalid choice. Skipping this query in {cat}.")
+            except Exception as e:
+                print(f"Error querying VizieR catalog {cat}: {e}")
+    
+        # Handle Gaia queries
+        if "I_355_GAIADR3" in selected_catalogs:
+            gaia_fields = catalogs.I_355_GAIADR3.keys()  # Get available fields from catalogs.py
+            valid_queries = []
+            for q in queries:
+                if q in gaia_fields:
+                    valid_queries.append(q)
+                else:
+                    print(f"Query '{q}' is not recognized by GAIA. Available fields:")
+                    for i, field in enumerate(gaia_fields, start=1):
+                        print(f"{i}. {field}")
+                    print("0. Skip this query")
+                    user_in = input("Enter the number of the query to use, or 0 to skip: ")
+                    try:
+                        choice = int(user_in)
+                    except ValueError:
+                        choice = 0
+                    if choice == 0:
+                        print(f"Skipping query '{q}' for GAIA.")
+                    elif 1 <= choice <= len(gaia_fields):
+                        chosen_field = list(gaia_fields)[choice - 1]
+                        valid_queries.append(chosen_field)
+                    else:
+                        print("Invalid choice. Skipping this query for GAIA.")
+    
+            if valid_queries:
+                try:
+                    gaia_query = f"SELECT {', '.join(valid_queries)} FROM gaiadr3.gaia_source WHERE source_id = {self.star_name}"
+                    gaia_job = Gaia.launch_job(gaia_query)
+                    gaia_res = gaia_job.get_results()
+                    if gaia_res is None or len(gaia_res) == 0:
+                        print(f"No results found for {self.star_name} in Gaia.")
+                    else:
+                        for q in valid_queries:
+                            if q in gaia_res.colnames:
+                                value = gaia_res[q][0]
+                                results.append(("I_355_GAIADR3", q, value))
+                except Exception as e:
+                    print(f"Error querying Gaia: {e}")
+    
+        # Now we have a list of (Catalog, Query_Key, Query_Value)
+        # Print a table with star name, catalog, query key, and value
+        if results:
+            df = pd.DataFrame(results, columns=["Catalog", "Query Key", "Query Value"])
+            df.insert(0, "Star Name", self.star_name)
+            print(tabulate(df, headers="keys", tablefmt="pretty"))
+        else:
+            print("No queries were resolved.")
+
+    ########################################                Combined Spectra                   ########################################
 
     def combine_fits_files(self, epoch_num=None,band = None,overwrite = False, backup = False, save = False):
         try:
@@ -1634,94 +1955,91 @@ class Star:
 
 ########################################                cleaning data using 2D images                ########################################
 
-    def clean_flux_and_normalize(self, epoch_num, band, bottom_spacial=None, top_spacial=None):
+    def clean_flux_and_normalize(self, epoch_num, band, bottom_spacial=None, top_spacial=None, exclude_spacial=None):
         """
         Cleans the 2D flux image, normalizes the flux, and compares with external normalized data.
-    
+
         Parameters:
             epoch_num: int, the epoch number for the observation
             band: str, the band of the observation (e.g., 'VIS', 'UVB', etc.)
+            bottom_spacial: int, optional
+                Bottom spatial coordinate to include in the region of interest. Default is automatically detected.
+            top_spacial: int, optional
+                Top spatial coordinate to include in the region of interest. Default is automatically detected.
+            exclude_spacial: tuple(int, int), optional
+                A range of spatial coordinates to exclude from summation (e.g., contaminating star region).
         """
         # Load the 2D image
         fits_file_2D = self.load_2D_observation(epoch_num, band)
         image_data = fits_file_2D.primary_data
-    
-        # Automatically detect the top and bottom spatial limits if not provided
-        def detect_spatial_limits(image_data, wavelengths_2D, threshold=0.5):
-            """
-            Automatically detect top and bottom boundaries based on flux changes.
-    
-            Parameters:
-                image_data: 2D numpy array, the flux image data
-                threshold: float, gradient threshold to detect boundaries
-    
-            Returns:
-                tuple: (bottom_spacial, top_spacial) indices
-            """
-            vertical_flux = np.median(image_data, axis=1)  # Sum flux along the horizontal axis
-            gradient = np.gradient(vertical_flux)
-            plt.scatter(range(len(gradient)-1,-1,-1),vertical_flux, label = 'mean of horizantal axis')
-            plt.plot(range(len(gradient)-1,-1,-1),gradient, label = 'gradient of mean along spacial coordinates')
-            plt.legend()
-            plt.show()
-            large_changes = np.where(np.abs(gradient) > threshold)[0]
-            return 30,68
-            if len(large_changes) >= 2:
-                return large_changes[0] + 1, large_changes[-1] - 1
+
+        # Detect spatial limits if not provided
+        if bottom_spacial is None or top_spacial is None:
+            if band == 'NIR':
+                bottom_spacial, top_spacial = (-52, -24)
             else:
-                raise ValueError("Unable to detect spatial limits automatically.")
-    
+                bottom_spacial, top_spacial = (-68, -30)
+        print(f"The top limit is: {top_spacial}, and the bottom limit is: {bottom_spacial}")
+
+        # Exclude spatial coordinates if specified
+        exclude_start, exclude_end = None, None
+        if exclude_spacial:
+            exclude_start, exclude_end = exclude_spacial
+            flipped_exclude_start = image_data.shape[0] - exclude_start
+            flipped_exclude_end = image_data.shape[0] - exclude_end
+
+            # Set the flipped range to zero
+            image_data[flipped_exclude_end:flipped_exclude_start, :] = 0
+            print(f"Excluding spatial range (flipped) from {flipped_exclude_end} to {flipped_exclude_start}.")
+
+        # Crop the image to the specified region
+        image_data_central = image_data[bottom_spacial:top_spacial, :]
+        spacial_coordinate = np.arange(0,len(image_data),1)[bottom_spacial:top_spacial]
+        print(f'spacial_coordinate: {spacial_coordinate}')
+
+        # Sum the flux along the columns
+        summed_flux = np.sum(image_data_central, axis=0)
+
         # Get wavelengths from the 2D data
         fits_file_1D = self.load_observation(epoch_num, band)
         wavelengths_2D = fits_file_1D.data['WAVE'][0]
-        external_flux = fits_file_1D.data['FLUX'][0]
-        
-        # Detect spatial limits
-        # bottom_spacial, top_spacial = detect_spatial_limits(image_data, wavelengths_2D)
-        if band == 'NIR':
-            bottom_spacial, top_spacial = (-52,-24)
-        else:
-            bottom_spacial, top_spacial = (-68,-30)
-        print(f'The top lines is: {top_spacial}, and the bottom line is: {bottom_spacial}')
-    
-        # Crop the image to the middle region
-        image_data_central = image_data[bottom_spacial:top_spacial, :]
-    
-        # Sum the flux along the columns
-        summed_flux = np.sum(image_data_central, axis=0)
-    
+
         # Load anchor points for normalization
         anchor_points = self.load_property('norm_anchor_wavelengths', epoch_num, band='COMBINED')
-    
-    
-        # Restrict anchor points to the 2D image's wavelength range
         anchor_points_in_range = anchor_points[
             (anchor_points >= wavelengths_2D.min()) & (anchor_points <= wavelengths_2D.max())
-        ]
-    
-        # Filter anchor points and select corresponding flux
+            ]
         closest_indices = [np.abs(wavelengths_2D - ap).argmin() for ap in anchor_points_in_range]
-        print(f' anchor_points_in_range: {anchor_points_in_range}')
-        print(f'found points from wavelngth_2D: {wavelengths_2D[closest_indices]}')
-        selected_flux = []
-        for index in closest_indices:
-            flux_mean = ut.robust_mean(summed_flux[index-10:index+10],1)
-            # flux_std = ut.robust_std(summed_flux[index-5:index+5],1)
-            # flux_index = summed_flux[index]
-            # if not ((flux_mean - flux_std) <= flux_index and flux_index <= (flux_mean + flux_std)):
-            #     flux_index = flux_mean
-            # selected_flux.append(flux_index)
-            selected_flux.append(flux_mean)
-        # selected_flux = summed_flux[closest_indices]  # Match flux to anchor points
-    
+        selected_flux = [ut.robust_mean(summed_flux[index - 10:index + 10], 1) for index in closest_indices]
+
         if len(selected_flux) != len(anchor_points_in_range):
             raise ValueError("Mismatch between selected_flux and anchor_points sizes.")
-    
-        # Interpolate the continuum flux for the entire wavelength range of the 2D image
+
+        # Interpolate the continuum flux
         continuum_flux_interpolated = np.interp(wavelengths_2D, anchor_points_in_range, selected_flux)
-    
-        # Normalize the summed flux using the interpolated continuum flux
+
+        # Normalize the summed flux
         normalized_summed_flux = summed_flux / continuum_flux_interpolated
+
+        # Plot the 2D flux image with excluded regions
+        title = f"2D Flux Image for {self.star_name} Band {band} (Epoch {epoch_num})"
+        # Plot the 2D image
+        p2D.Plot2DImage(
+            image_data,
+            wavelengths_2D,
+            band,
+            title=title,
+            ValMin=-600,
+            ValMax=600,
+            see_all=True
+        )
+
+        # Add vertical lines for excluded regions on top of the 2D plot
+        if exclude_spacial:
+            plt.axhline(exclude_start, linestyle="dotted", color="red", label="Excluded Start")
+            plt.axhline(exclude_end, linestyle="dotted", color="red", label="Excluded End")
+            plt.legend()
+            # plt.show()
     
         # Load external normalized flux for comparison (same band)
         external_data = self.load_property('normalized_flux', epoch_num, band='COMBINED')
@@ -1747,7 +2065,21 @@ class Star:
         # plt.plot(external_wavelengths_band, external_normalized_flux_band, label='External Flux', color='orange', alpha=0.7)
         plt.xlabel('Wavelength (nm)')
         plt.ylabel('summed Flux')
-        plt.title(f'Normalized Flux Comparison for {band} (Epoch {epoch_num})')
+        plt.title(f'Summed Flux Comparison for {self.star_name} band {band} (Epoch {epoch_num})')
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+
+        summed_flux_horizontaly = np.sum(image_data_central, axis=1)
+        # Plot summed horizontaly flux
+        plt.figure(figsize=(15, 9))
+        fig.subplots_adjust(wspace=0.1, hspace=0.1)
+        plt.plot(spacial_coordinate, summed_flux_horizontaly, label=f'Summed Flux horizontaly({band})', color='blue')
+        # plt.scatter(anchor_points_in_range,selected_flux, label = 'anchor points', color = 'red')
+        # plt.plot(external_wavelengths_band, external_normalized_flux_band, label='External Flux', color='orange', alpha=0.7)
+        plt.xlabel('Wavelength (nm)')
+        plt.ylabel('summed Flux')
+        plt.title(f'Summed Flux Comparison for {self.star_name} band {band} (Epoch {epoch_num})')
         plt.legend()
         plt.grid(True)
         plt.show()
@@ -1755,11 +2087,11 @@ class Star:
         
         # Plot the normalized flux comparison
         plt.figure(figsize=(12, 6))
-        plt.plot(external_wavelengths_band, normalized_summed_flux_resampled, label=f'Normalized Summed Flux ({band})', color='blue')
-        plt.plot(external_wavelengths_band, external_normalized_flux_band, label='External Normalized Flux', color='orange', alpha=0.7)
+        plt.plot(external_wavelengths_band, normalized_summed_flux_resampled, label=f'Cleaned Normalized Summed Flux ({band})', color='blue')
+        plt.plot(external_wavelengths_band, external_normalized_flux_band, label='Non-Cleaned Normalized Flux', color='orange', alpha=0.7)
         plt.xlabel('Wavelength (nm)')
         plt.ylabel('Normalized Flux')
-        plt.title(f'Normalized Flux Comparison for {band} (Epoch {epoch_num})')
+        plt.title(f'Normalized Flux Comparison for {self.star_name} band {band} (Epoch {epoch_num})')
         plt.legend()
         plt.grid(True)
         plt.show()
@@ -1769,7 +2101,7 @@ class Star:
         plt.plot(external_wavelengths_band, flux_difference, label='Flux Difference', color='red')
         plt.xlabel('Wavelength (nm)')
         plt.ylabel('Flux Difference')
-        plt.title(f'Flux Difference (Normalized Summed Flux - External) for {band} (Epoch {epoch_num})')
+        plt.title(f'Flux Difference (Normalized Summed Flux - External) for {self.star_name} band {band} (Epoch {epoch_num})')
         plt.legend()
         plt.grid(True)
         plt.show()
@@ -1781,17 +2113,482 @@ class Star:
         plt.plot(external_wavelengths_band, -np.ones(len(external_wavelengths_band))/10, linestyle = 'dashed', color = 'red')
         plt.xlabel('Wavelength (nm)')
         plt.ylabel('Relative Difference')
-        plt.title(f'Relative Flux Difference (Diff / External Flux) for {band} (Epoch {epoch_num})')
+        plt.title(f'Relative Flux Difference (Diff / External Flux) for {self.star_name} band {band} (Epoch {epoch_num})')
         plt.legend()
         plt.grid(True)
         plt.show()
     
         return normalized_summed_flux_resampled, external_wavelengths_band, (bottom_spacial, top_spacial)
 
-
-
-
+    def clean_flux_and_normalize2(self, epoch_num, band, bottom_spacial=None, top_spacial=None, include_spacial=None):
+        """
+        Cleans the 2D flux image by selecting a 'clean' vertical region interactively using sliders, 
+        normalizes the flux, and compares with external normalized data.
+        """
     
+        # Load the 2D image
+        fits_file_2D = self.load_2D_observation(epoch_num, band)
+        image_data = fits_file_2D.primary_data
+    
+        # Get wavelengths from the 2D data
+        fits_file_1D = self.load_observation(epoch_num, band)
+        wavelengths_2D = fits_file_1D.data['WAVE'][0]
+    
+        # Detect spatial limits if not provided
+        if bottom_spacial is None or top_spacial is None:
+            if band == 'NIR':
+                bottom_spacial, top_spacial = (-52, -24)
+            else:
+                bottom_spacial, top_spacial = (-68, -30)
+        print(f"The top limit is: {top_spacial}, and the bottom limit is: {bottom_spacial}")
+    
+        # Crop the image to the specified region
+        image_data_central = image_data[bottom_spacial:top_spacial, :]
+        spacial_coordinate = np.arange(0, len(image_data), 1)[bottom_spacial:top_spacial]
+        print(f'spacial_coordinate: {spacial_coordinate}')
+    
+        # Initial include_spacial guess if not provided
+        if include_spacial is None:
+            include_spacial = (0, image_data_central.shape[0])
+    
+        # Load normalization and external data
+        anchor_points = self.load_property('norm_anchor_wavelengths', epoch_num, band='COMBINED')
+        external_data = self.load_property('normalized_flux', epoch_num, band='COMBINED')
+        external_normalized_flux = external_data['normalized_flux']
+        external_wavelengths = external_data['wavelengths']
+    
+        mask_band = (external_wavelengths >= wavelengths_2D.min()) & (external_wavelengths <= wavelengths_2D.max())
+        external_normalized_flux_band = external_normalized_flux[mask_band]
+        external_wavelengths_band = external_wavelengths[mask_band]
+    
+        # Create figure
+        # Increase size and give space at bottom. 
+        fig = plt.figure(figsize=(12, 9))
+        # Adjust subplots to have more space around
+        # More bottom space for sliders and button, more spacing between subplots
+        fig.subplots_adjust(left=0.08, right=0.95, top=0.92, bottom=0.25, wspace=0.4, hspace=0.6)
+    
+        # Axes for the 2D image
+        ax_image = plt.subplot2grid((3, 2), (0, 0), rowspan=2)
+        p2D.Plot2DImage(
+            image_data_central,
+            wavelengths_2D, 
+            band,
+            title=f"2D Flux Image for {self.star_name} Band {band} (Epoch {epoch_num})",
+            ValMin=-600,
+            ValMax=600,
+            see_all=True,
+            ax=ax_image
+        )
+        ax_image.set_title("Adjust sliders below to select star region", fontsize=12)
+    
+        # Create the horizontal lines for include_spacial
+        line_incl_start = ax_image.axhline(include_spacial[0], color='red', linestyle='--')
+        line_incl_end = ax_image.axhline(include_spacial[1], color='red', linestyle='--')
+    
+        # Axes for the summed flux vertically
+        ax_summed_vertical = plt.subplot2grid((3, 2), (0, 1))
+    
+        # Axes for the summed flux horizontally
+        ax_summed_horizontal = plt.subplot2grid((3, 2), (1, 1))
+    
+        # Axes for normalized flux comparison & difference
+        ax_norm = plt.subplot2grid((3, 2), (2, 0))
+        ax_diff = plt.subplot2grid((3, 2), (2, 1))
+    
+        # Set initial y-limits for normalized flux and difference
+        ax_norm.set_ylim(-3, 5)
+        ax_diff.set_ylim(-3, 5)
+    
+        # Position sliders and button below the plots
+        slider_ax_start = plt.axes([0.1, 0.14, 0.35, 0.03])
+        slider_ax_end = plt.axes([0.55, 0.14, 0.35, 0.03])
+        finish_ax = plt.axes([0.45, 0.06, 0.1, 0.05])
+    
+        # Create sliders
+        slider_start = Slider(slider_ax_start, 'Include Start', 0, image_data_central.shape[0]-1, valinit=include_spacial[0], valstep=1)
+        slider_end = Slider(slider_ax_end, 'Include End', 1, image_data_central.shape[0], valinit=include_spacial[1], valstep=1)
+    
+        finish_button = Button(finish_ax, 'Finish', color='lightgoldenrodyellow', hovercolor='0.975')
+        finished = {'value': False}
+    
+        # Lines (for updating)
+        line_summed_vertical, = ax_summed_vertical.plot([], [], color='blue', label='Summed Flux (vertical)')
+        scatter_anchors = ax_summed_vertical.scatter([], [], color='red', label='Anchor Points')
+        line_summed_horizontal, = ax_summed_horizontal.plot([], [], color='blue', label='Summed Flux (horizontal)')
+        line_norm_cleaned, = ax_norm.plot([], [], color='blue', label='Cleaned Normalized Summed Flux')
+        line_norm_external, = ax_norm.plot([], [], color='orange', alpha=0.7, label='Non-Cleaned Normalized Flux')
+        line_diff, = ax_diff.plot([], [], color='red', label='Flux Difference')
+        line_reldiff, = ax_diff.plot([], [], color='purple', label='Relative Difference')
+    
+        # Reference lines for relative difference
+        ax_diff.axhline(0.1, color='red', linestyle='dashed')
+        ax_diff.axhline(-0.1, color='red', linestyle='dashed')
+    
+        ax_summed_vertical.set_xlabel('Wavelength (nm)')
+        ax_summed_vertical.set_ylabel('Summed Flux')
+        ax_summed_vertical.set_title('Vertical Summed Flux', fontsize=10)
+        ax_summed_vertical.legend(fontsize=9)
+        ax_summed_vertical.grid(True)
+    
+        ax_summed_horizontal.set_xlabel('Spatial Coordinate')
+        ax_summed_horizontal.set_ylabel('Summed Flux')
+        ax_summed_horizontal.set_title('Horizontal Summed Flux', fontsize=10)
+        ax_summed_horizontal.legend(fontsize=9)
+        ax_summed_horizontal.grid(True)
+    
+        ax_norm.set_xlabel('Wavelength (nm)')
+        ax_norm.set_ylabel('Normalized Flux')
+        ax_norm.set_title('Normalized Flux Comparison', fontsize=10)
+        ax_norm.legend(fontsize=9)
+        ax_norm.grid(True)
+    
+        ax_diff.set_xlabel('Wavelength (nm)')
+        ax_diff.set_ylabel('Difference')
+        ax_diff.set_title('Flux & Relative Difference', fontsize=10)
+        ax_diff.legend(fontsize=9)
+        ax_diff.grid(True)
+    
+        def update_plots(val):
+            # Get current slider values
+            include_start = int(slider_start.val)
+            include_end = int(slider_end.val)
+            if include_end <= include_start:
+                return
+    
+            # Update horizontal lines on the 2D image
+            line_incl_start.set_ydata([include_start, include_start])
+            line_incl_end.set_ydata([include_end, include_end])
+    
+            image_data_included = image_data_central[include_start:include_end, :]
+            included_spacial_coordinate = spacial_coordinate[include_start:include_end]
+    
+            summed_flux = np.sum(image_data_included, axis=0)
+            anchor_points_in_range = anchor_points[(anchor_points >= wavelengths_2D.min()) & (anchor_points <= wavelengths_2D.max())]
+            closest_indices = [np.abs(wavelengths_2D - ap).argmin() for ap in anchor_points_in_range]
+            selected_flux = [ut.robust_mean(summed_flux[max(0,index - 10):index + 10], 1) for index in closest_indices]
+    
+            if len(anchor_points_in_range) > 1:
+                continuum_flux_interpolated = np.interp(wavelengths_2D, anchor_points_in_range, selected_flux)
+            else:
+                continuum_flux_interpolated = np.full_like(wavelengths_2D, selected_flux[0] if selected_flux else 1.0)
+    
+            normalized_summed_flux = summed_flux / continuum_flux_interpolated
+            normalized_summed_flux_resampled = np.interp(external_wavelengths_band, wavelengths_2D, normalized_summed_flux)
+    
+            flux_difference = normalized_summed_flux_resampled - external_normalized_flux_band
+            relative_difference = flux_difference / external_normalized_flux_band
+    
+            # Update vertical summed flux
+            line_summed_vertical.set_xdata(wavelengths_2D)
+            line_summed_vertical.set_ydata(summed_flux)
+            scatter_anchors.set_offsets(np.c_[anchor_points_in_range, selected_flux] if len(selected_flux)>0 else [])
+            ax_summed_vertical.relim()
+            ax_summed_vertical.autoscale_view()
+    
+            # Update horizontal summed flux
+            line_summed_horizontal.set_xdata(included_spacial_coordinate)
+            line_summed_horizontal.set_ydata(np.sum(image_data_included, axis=1))
+            ax_summed_horizontal.relim()
+            ax_summed_horizontal.autoscale_view()
+    
+            # Update normalized flux and differences (fixed y-limits, no autoscale)
+            line_norm_cleaned.set_xdata(external_wavelengths_band)
+            line_norm_cleaned.set_ydata(normalized_summed_flux_resampled)
+            line_norm_external.set_xdata(external_wavelengths_band)
+            line_norm_external.set_ydata(external_normalized_flux_band)
+    
+            line_diff.set_xdata(external_wavelengths_band)
+            line_diff.set_ydata(flux_difference)
+            line_reldiff.set_xdata(external_wavelengths_band)
+            line_reldiff.set_ydata(relative_difference)
+    
+            fig.canvas.draw_idle()
+    
+        def finish_callback(event):
+            finished['value'] = True
+            plt.close(fig)  # Close the figure to exit the loop
+    
+        finish_button.on_clicked(finish_callback)
+    
+        # Initial update
+        update_plots(None)
+        slider_start.on_changed(update_plots)
+        slider_end.on_changed(update_plots)
+    
+        plt.show()
+    
+        # After the window is closed, return the final chosen values
+        final_include_spacial = (int(slider_start.val), int(slider_end.val))
+    
+        # Recompute final arrays one last time for the returned values
+        image_data_included = image_data_central[final_include_spacial[0]:final_include_spacial[1], :]
+        summed_flux = np.sum(image_data_included, axis=0)
+        anchor_points_in_range = anchor_points[(anchor_points >= wavelengths_2D.min()) & (anchor_points <= wavelengths_2D.max())]
+        closest_indices = [np.abs(wavelengths_2D - ap).argmin() for ap in anchor_points_in_range]
+        selected_flux = [ut.robust_mean(summed_flux[max(0,index - 10):index + 10], 1) for index in closest_indices]
+    
+        if len(anchor_points_in_range) > 1:
+            continuum_flux_interpolated = np.interp(wavelengths_2D, anchor_points_in_range, selected_flux)
+        else:
+            continuum_flux_interpolated = np.full_like(wavelengths_2D, selected_flux[0] if selected_flux else 1.0)
+    
+        normalized_summed_flux = summed_flux / continuum_flux_interpolated
+        normalized_summed_flux_resampled = np.interp(external_wavelengths_band, wavelengths_2D, normalized_summed_flux)
+    
+        return normalized_summed_flux_resampled, external_wavelengths_band, (bottom_spacial, top_spacial), final_include_spacial
 
+    def clean_flux_and_normalize3(self, epoch_num, band, bottom_spacial=None, top_spacial=None, include_spacial=None):
+        """
+        Cleans the 2D flux image by selecting a 'clean' vertical region interactively using sliders,
+        normalizes the flux, and compares with external normalized data.
+
+        Parameters:
+            epoch_num: int, the epoch number for the observation
+            band: str, the band of the observation (e.g., 'VIS', 'UVB', etc.)
+            bottom_spacial: int, optional
+                Bottom spatial coordinate to include in the region of interest. Default is automatically detected.
+            top_spacial: int, optional
+                Top spatial coordinate to include in the region of interest. Default is automatically detected.
+            include_spacial: tuple(int, int), optional
+                A vertical range of spatial coordinates to include (representing the star region).
+                If not given, it will be selected interactively using sliders.
+        """
+
+        # Load the 2D image
+        fits_file_2D = self.load_2D_observation(epoch_num, band)
+        image_data = fits_file_2D.primary_data
+
+        # Get wavelengths from the 2D data
+        fits_file_1D = self.load_observation(epoch_num, band)
+        wavelengths_2D = fits_file_1D.data['WAVE'][0]
+
+        # Detect spatial limits if not provided
+        if bottom_spacial is None or top_spacial is None:
+            if band == 'NIR':
+                bottom_spacial, top_spacial = (-52, -24)
+            else:
+                bottom_spacial, top_spacial = (-68, -30)
+        print(f"The top limit is: {top_spacial}, and the bottom limit is: {bottom_spacial}")
+
+        # Crop the image to the specified region
+        image_data_central = image_data[bottom_spacial:top_spacial, :]
+        spacial_coordinate = np.arange(0, len(image_data), 1)[bottom_spacial:top_spacial]
+        print(f'spacial_coordinate: {spacial_coordinate}')
+
+        # Initial include_spacial guess if not provided
+        if include_spacial is None:
+            # For a start, just take the full range
+            include_spacial = (0, image_data_central.shape[0])
+
+        # Prepare normalization data
+        # Load anchor points for normalization
+        anchor_points = self.load_property('norm_anchor_wavelengths', epoch_num, band='COMBINED')
+
+        # Load external normalized flux for comparison (same band)
+        external_data = self.load_property('normalized_flux', epoch_num, band='COMBINED')
+        external_normalized_flux = external_data['normalized_flux']
+        external_wavelengths = external_data['wavelengths']
+
+        mask_band = (external_wavelengths >= wavelengths_2D.min()) & (external_wavelengths <= wavelengths_2D.max())
+        external_normalized_flux_band = external_normalized_flux[mask_band]
+        external_wavelengths_band = external_wavelengths[mask_band]
+
+        # --- Create the figure and axes ---
+        # Reduced figure size to fit screen better
+        fig = plt.figure(figsize=(9, 8))
+
+        # Axes for the 2D image
+        ax_image = plt.subplot2grid((3, 2), (0, 0), rowspan=2)
+        wave_and_sum = p2D.Plot2DImage(
+            image_data_central,
+            wavelengths_2D,
+            band,
+            title=f"2D Flux Image for {self.star_name} Band {band} (Epoch {epoch_num})",
+            ValMin=-600,
+            ValMax=600,
+            see_all=True,
+            ax=ax_image
+        )
+        ax_image.set_title("Adjust sliders below to select star region")
+
+        # Create the horizontal lines for include_spacial
+        line_incl_start = ax_image.axhline(include_spacial[0], color='red', linestyle='--')
+        line_incl_end = ax_image.axhline(include_spacial[1], color='red', linestyle='--')
+
+        # Axes for the summed flux vertically
+        ax_summed_vertical = plt.subplot2grid((3, 2), (0, 1))
+
+        # Axes for the summed flux horizontally
+        ax_summed_horizontal = plt.subplot2grid((3, 2), (1, 1))
+
+        # Axes for normalized flux comparison & difference
+        ax_norm = plt.subplot2grid((3, 2), (2, 0))
+        ax_diff = plt.subplot2grid((3, 2), (2, 1))
+
+        # Slider axes
+        slider_ax_start = plt.axes([0.1, 0.04, 0.35, 0.03])
+        slider_ax_end = plt.axes([0.55, 0.04, 0.35, 0.03])
+
+        # Finish button axis
+        finish_ax = plt.axes([0.45, 0.005, 0.1, 0.05])
+
+        # Create sliders
+        slider_start = Slider(slider_ax_start, 'Include Start', 0, image_data_central.shape[0] - 1,
+                              valinit=include_spacial[0], valstep=1)
+        slider_end = Slider(slider_ax_end, 'Include End', 1, image_data_central.shape[0], valinit=include_spacial[1],
+                            valstep=1)
+
+        # Finish button
+        finish_button = Button(finish_ax, 'Finish', color='lightgoldenrodyellow', hovercolor='0.975')
+        finished = {'value': False}
+
+        # Lines (for updating)
+        line_summed_vertical, = ax_summed_vertical.plot([], [], color='blue', label='Summed Flux (vertical)')
+        scatter_anchors = ax_summed_vertical.scatter([], [], color='red', label='Anchor Points')
+        line_summed_horizontal, = ax_summed_horizontal.plot([], [], color='blue', label='Summed Flux (horizontal)')
+        line_norm_cleaned, = ax_norm.plot([], [], color='blue', label='Cleaned Normalized Summed Flux')
+        line_norm_external, = ax_norm.plot([], [], color='orange', alpha=0.7, label='Non-Cleaned Normalized Flux')
+        line_diff, = ax_diff.plot([], [], color='red', label='Flux Difference')
+        line_reldiff, = ax_diff.plot([], [], color='purple', label='Relative Difference')
+
+        # Reference lines for relative difference
+        ax_diff.axhline(0.1, color='red', linestyle='dashed')
+        ax_diff.axhline(-0.1, color='red', linestyle='dashed')
+
+        # Set labels and legends
+        ax_summed_vertical.set_xlabel('Wavelength (nm)')
+        ax_summed_vertical.set_ylabel('Summed Flux')
+        ax_summed_vertical.set_title('Vertical Summed Flux')
+        ax_summed_vertical.legend()
+        ax_summed_vertical.grid(True)
+
+        ax_summed_horizontal.set_xlabel('Spacial Coordinate')
+        ax_summed_horizontal.set_ylabel('Summed Flux')
+        ax_summed_horizontal.set_title('Horizontal Summed Flux')
+        ax_summed_horizontal.legend()
+        ax_summed_horizontal.grid(True)
+
+        ax_norm.set_xlabel('Wavelength (nm)')
+        ax_norm.set_ylabel('Normalized Flux')
+        ax_norm.set_title('Normalized Flux Comparison')
+        ax_norm.legend()
+        ax_norm.grid(True)
+
+        ax_diff.set_xlabel('Wavelength (nm)')
+        ax_diff.set_ylabel('Difference')
+        ax_diff.set_title('Flux & Relative Difference')
+        ax_diff.legend()
+        ax_diff.grid(True)
+
+        def update_plots(val):
+            # Get current slider values
+            include_start = int(slider_start.val)
+            include_end = int(slider_end.val)
+            if include_end <= include_start:
+                return
+
+            # Update horizontal lines on the 2D image
+            line_incl_start.set_ydata([include_start, include_start])
+            line_incl_end.set_ydata([include_end, include_end])
+
+            image_data_included = image_data_central[include_start:include_end, :]
+            included_spacial_coordinate = spacial_coordinate[include_start:include_end]
+
+            # Recompute all quantities
+            summed_flux = np.sum(image_data_included, axis=0)
+
+            anchor_points_in_range = anchor_points[
+                (anchor_points >= wavelengths_2D.min()) & (anchor_points <= wavelengths_2D.max())
+                ]
+            closest_indices = [np.abs(wavelengths_2D - ap).argmin() for ap in anchor_points_in_range]
+            selected_flux = [ut.robust_mean(summed_flux[max(0, index - 10):index + 10], 1) for index in closest_indices]
+
+            # Interpolate continuum
+            if len(anchor_points_in_range) > 1:
+                continuum_flux_interpolated = np.interp(wavelengths_2D, anchor_points_in_range, selected_flux)
+            else:
+                continuum_flux_interpolated = np.full_like(wavelengths_2D, selected_flux[0] if selected_flux else 1.0)
+
+            normalized_summed_flux = summed_flux / continuum_flux_interpolated
+            normalized_summed_flux_resampled = np.interp(external_wavelengths_band, wavelengths_2D,
+                                                         normalized_summed_flux)
+
+            flux_difference = normalized_summed_flux_resampled - external_normalized_flux_band
+            relative_difference = flux_difference / external_normalized_flux_band
+
+            # Update lines
+            line_summed_vertical.set_xdata(wavelengths_2D)
+            line_summed_vertical.set_ydata(summed_flux)
+            scatter_anchors.set_offsets(np.c_[anchor_points_in_range, selected_flux] if len(selected_flux) > 0 else [])
+
+            line_summed_horizontal.set_xdata(included_spacial_coordinate)
+            line_summed_horizontal.set_ydata(np.sum(image_data_included, axis=1))
+
+            line_norm_cleaned.set_xdata(external_wavelengths_band)
+            line_norm_cleaned.set_ydata(normalized_summed_flux_resampled)
+
+            line_norm_external.set_xdata(external_wavelengths_band)
+            line_norm_external.set_ydata(external_normalized_flux_band)
+
+            line_diff.set_xdata(external_wavelengths_band)
+            line_diff.set_ydata(flux_difference)
+
+            line_reldiff.set_xdata(external_wavelengths_band)
+            line_reldiff.set_ydata(relative_difference)
+
+            # Adjust limits
+            ax_summed_vertical.relim()
+            ax_summed_vertical.autoscale_view()
+
+            ax_summed_horizontal.relim()
+            ax_summed_horizontal.autoscale_view()
+
+            ax_norm.relim()
+            ax_norm.autoscale_view()
+
+            ax_diff.relim()
+            ax_diff.autoscale_view()
+
+            fig.canvas.draw_idle()
+
+        def finish_callback(event):
+            finished['value'] = True
+            plt.close(fig)  # Close the figure to exit the loop
+
+        finish_button.on_clicked(finish_callback)
+
+        # Initial update
+        update_plots(None)
+
+        slider_start.on_changed(update_plots)
+        slider_end.on_changed(update_plots)
+
+        plt.tight_layout()
+        plt.show()
+
+        # After the window is closed, return the final chosen values
+        final_include_spacial = (int(slider_start.val), int(slider_end.val))
+
+        # Recompute final arrays one last time for the returned values
+        image_data_included = image_data_central[final_include_spacial[0]:final_include_spacial[1], :]
+        summed_flux = np.sum(image_data_included, axis=0)
+
+        anchor_points_in_range = anchor_points[
+            (anchor_points >= wavelengths_2D.min()) & (anchor_points <= wavelengths_2D.max())
+            ]
+        closest_indices = [np.abs(wavelengths_2D - ap).argmin() for ap in anchor_points_in_range]
+        selected_flux = [ut.robust_mean(summed_flux[max(0, index - 10):index + 10], 1) for index in closest_indices]
+
+        if len(anchor_points_in_range) > 1:
+            continuum_flux_interpolated = np.interp(wavelengths_2D, anchor_points_in_range, selected_flux)
+        else:
+            continuum_flux_interpolated = np.full_like(wavelengths_2D, selected_flux[0] if selected_flux else 1.0)
+
+        normalized_summed_flux = summed_flux / continuum_flux_interpolated
+        normalized_summed_flux_resampled = np.interp(external_wavelengths_band, wavelengths_2D, normalized_summed_flux)
+
+        return normalized_summed_flux_resampled, external_wavelengths_band, (
+        bottom_spacial, top_spacial), final_include_spacial
 
 
