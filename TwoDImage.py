@@ -40,7 +40,163 @@ PATH_TO_OBS = f'../RawData/archive/ADP.2020-11-13T12:33:07.692.fits'
 
 # image_data = fits.getdata(PATH_TO_OBS, ext=0)
 
-def Plot2DImage(image_data,wavelengths,band, title='', ValMin=None, ValMax=None,norm = False,see_all = False):
+def Plot2DImage_for_cleaning(image_data, wavelengths, band, bottom_spacial, top_spacial, abs_include_start, abs_include_end, title='', ValMin=None, ValMax=None, norm=False, ax=None):
+    """
+    Plots a 2D image of flux vs. wavelength and spatial coordinate, with internal cropping.
+    Negative indices for bottom_spacial and top_spacial are interpreted from the end.
+    After cropping, the vertical axis starts at 0 at the new bottom line and goes up
+    to (top_spacial - bottom_spacial - 1).
+
+    Parameters:
+        image_data: 2D numpy array (full image)
+        wavelengths: 1D array of wavelengths corresponding to columns of image_data
+        band: str, the observation band (e.g. 'NIR', 'UVB')
+        bottom_spacial: int, bottom spatial index (can be negative)
+        top_spacial: int, top spatial index (can be negative)
+        title: str, title for the plot
+        ValMin, ValMax: float, optional intensity limits
+        norm: bool, if True, use log normalization
+        ax: matplotlib axis object, if None, create a new figure and axis
+
+    Returns:
+        tuple: (wavelengths or None, summed_flux_over_spatial)
+    """
+
+    height = image_data.shape[0]
+
+    # Crop the image internally based on the provided spatial indices
+    cropped_image = image_data[bottom_spacial:top_spacial, :]
+    
+    # Convert negative indices to positive
+    if bottom_spacial < 0:
+        bottom_spacial = height + bottom_spacial
+    if top_spacial < 0:
+        top_spacial = height + top_spacial
+
+    # Ensure top_spacial > bottom_spacial
+    if top_spacial <= bottom_spacial:
+        top_spacial = bottom_spacial + 1
+
+
+    # print(f'Spatial axis has {cropped_image.shape[0]} items')
+
+    # Filter out non-positive values if needed for LogNorm
+    positive_data = cropped_image[cropped_image > 0]
+
+    # Determine extent for imshow
+    if wavelengths is not None:
+        x_min, x_max = wavelengths[0], wavelengths[-1]
+    else:
+        x_min, x_max = 0, cropped_image.shape[1] - 1
+
+    # After cropping, define the y-axis from 0 to height_of_cropped_region-1
+    # so that the bottom line is 0 and the top line is top_spacial - bottom_spacial.
+    cropped_height = cropped_image.shape[0]
+    y_min, y_max = bottom_spacial, top_spacial
+
+    # If ax is not provided, create a new figure and axis
+    created_figure = False
+    if ax is None:
+        fig = plt.figure(figsize=(10, 8))
+        ax = fig.add_subplot(111)
+        created_figure = True
+
+    ax.set_title(title)
+    ax.set_xlabel("Wavelength (nm)" if wavelengths is not None else "Pixel coordinate")
+    ax.set_ylabel('Spatial coordinate')
+
+    # Determine normalization or linear scale
+    if norm:
+        if positive_data.size > 0:
+            if ValMin is None:
+                ValMin = np.amin(positive_data)
+            if ValMax is None:
+                ValMax = np.amax(positive_data)
+        else:
+            # If no positive data, fall back to entire cropped_image
+            if ValMin is None:
+                ValMin = np.amin(cropped_image)
+            if ValMax is None:
+                ValMax = np.amax(cropped_image)
+        norm_scale = mcolors.LogNorm(vmin=ValMin, vmax=ValMax)
+        im = ax.imshow(cropped_image, norm=norm_scale, aspect='auto', extent=(x_min, x_max, y_min, y_max), origin='lower')
+    else:
+        ValMin = np.amin(cropped_image) if ValMin is None else ValMin
+        ValMax = np.amax(cropped_image) if ValMax is None else ValMax
+        # ax.axhline(abs_include_start - bottom_spacial, color='red', linestyle='--')
+        # ax.axhline(abs_include_end - bottom_spacial, color='red', linestyle='--')
+        ax.axhline(abs_include_start, color='red', linestyle='--')
+        ax.axhline(abs_include_end, color='red', linestyle='--')
+        im = ax.imshow(cropped_image, vmin=ValMin, vmax=ValMax, aspect='auto', extent=(x_min, x_max, y_min, y_max), origin='lower')
+
+    if created_figure:
+        plt.colorbar(im, ax=ax, orientation='vertical', label='Flux (counts)')
+        plt.tight_layout()
+        plt.show()
+
+    # Return wavelengths and summed flux
+    if wavelengths is not None:
+        return wavelengths, np.sum(cropped_image, axis=0)
+    else:
+        return None, np.sum(cropped_image, axis=0)
+
+def Plot2DImage_old(image_data, wavelengths, band, title='', ValMin=None, ValMax=None, norm=False, see_all=False, ax=None):
+    if not see_all:
+        if band == 'NIR':
+            image_data = image_data[-52:-24, :]
+        else:
+            image_data = image_data[-68:-30, :]
+
+    print(f'spacial axis has {len(image_data[:, 1])} items')
+    # Filter out non-positive values for LogNorm
+    positive_data = image_data[image_data > 0]
+
+    # Determine extent for imshow
+    if wavelengths is not None:
+        x_min, x_max = wavelengths[0], wavelengths[-1]
+    else:
+        # If no wavelengths given, just use pixel coordinates
+        x_min, x_max = 0, image_data.shape[1] - 1
+    y_min, y_max = 0, image_data.shape[0] - 1
+
+    # If ax is not provided, create a new figure and axis
+    created_figure = False
+    if ax is None:
+        fig = plt.figure(figsize=(10, 8))
+        ax = fig.add_subplot(111)
+        created_figure = True
+
+    ax.set_title(title)
+    ax.set_xlabel("Wavelength (nm)" if wavelengths is not None else "Pixel coordinate")
+    ax.set_ylabel('Spatial coordinate')
+
+    # Determine normalization or linear scale
+    if norm:
+        ValMin = np.amin(positive_data) if ValMin is None else ValMin
+        ValMax = np.amax(positive_data) if ValMax is None else ValMax
+        norm = mcolors.LogNorm(vmin=ValMin, vmax=ValMax)
+        im = ax.imshow(image_data, norm=norm, aspect='auto', extent=(x_min, x_max, y_min, y_max), origin='lower')
+    else:
+        ValMin = np.amin(image_data) if ValMin is None else ValMin
+        ValMax = np.amax(image_data) if ValMax is None else ValMax
+        im = ax.imshow(image_data, vmin=ValMin, vmax=ValMax, aspect='auto', extent=(x_min, x_max, y_min, y_max), origin='lower')
+
+    # Add colorbar only if we created the figure (to avoid duplication if caller handles it)
+    if created_figure:
+        plt.colorbar(im, ax=ax, orientation='vertical', label='Flux (counts)')
+        plt.tight_layout()
+        plt.show()
+
+    # If needed, reconstruct the wavelength solution (though this logic may be out of place if PATH_TO_OBS isn't defined here)
+    # Without the path or header info, we can't reliably reconstruct the wavelength grid.
+    # Returning the sums if needed:
+    if wavelengths is not None:
+        return wavelengths, np.sum(image_data, axis=0)
+    else:
+        return None, np.sum(image_data, axis=0)
+
+
+def Plot2DImage_older(image_data,wavelengths,band, title='', ValMin=None, ValMax=None,norm = False,see_all = False):
     if not see_all:
         if band == 'NIR':
             image_data = image_data[-52:-24,:]
