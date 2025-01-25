@@ -17,11 +17,17 @@ def clean_flux_and_normalize_interactive(
         band,
         star_name,
         epoch_num,
+        load_saved_flag,
         bottom_spacial=None,
         top_spacial=None,
         include_spacial=None
     ):
 
+    if load_saved_flag:
+        saved_data = star.load_property('clean_normalized_flux',epoch_num,band)
+        if saved_data:
+            include_spacial = saved_data['included_spacial_coords']
+            anchor_points = saved_data['anchor points']
     if bottom_spacial is None or top_spacial is None:
         if band == 'NIR':
             bottom_spacial, top_spacial = (23, 51)
@@ -369,7 +375,8 @@ def main():
                     anchor_points,
                     band,
                     star_name,
-                    epoch_num
+                    epoch_num,
+                    load_saved_flag
                 )
 
                 print(f"Processed star: {star_name}, epoch: {epoch_num}, band: {band}")
@@ -379,7 +386,8 @@ def main():
                 if navigation['finish']:
                     clean_normalized_flux = {
                         'normalized_flux': normalized_summed_flux_resampled,
-                        'wavelengths': returned_wavelengths_2D
+                        'wavelengths': returned_wavelengths_2D,
+                        'included_spacial_coords': include_spacial
                     }
                     star.save_property('clean_normalized_flux', clean_normalized_flux, epoch_num, band,
                                        overwrite=overwrite_flag, backup=backup_flag)

@@ -6,8 +6,8 @@ clight = 2.9979E5  # [km/s]
 eps = 1E-10
 
 class CCFclass:
-    def __init__(self, intr_kind='cubic', Fit_Range_in_fraction=0.95, CrossCorRangeA=[[400., 500.]],
-                 CrossVeloMin=-400., CrossVeloMax=400., PlotFirst=True, PlotAll=False):
+    def __init__(self, intr_kind='cubic', Fit_Range_in_fraction=0.95, CrossCorRangeA=[[4000., 5000.]],
+                 CrossVeloMin=-400., CrossVeloMax=400., PlotFirst=False, PlotAll=False):
         # Determines type of interpolation when reading spectra: should not be changed
         self.intr_kind = intr_kind
 

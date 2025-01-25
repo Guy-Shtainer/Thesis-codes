@@ -2120,7 +2120,7 @@ class Star:
     
         return normalized_summed_flux_resampled, external_wavelengths_band, (bottom_spacial, top_spacial)
 
-    def clean_flux_and_normalize2(self, epoch_num, band, bottom_spacial=None, top_spacial=None, include_spacial=None):
+    def clean_flux_and_normalize_interactive_old(self, epoch_num, band, bottom_spacial=None, top_spacial=None, include_spacial=None):
         """
         Cleans the 2D flux image by selecting a 'clean' vertical region interactively using sliders, 
         normalizes the flux, and compares with external normalized data.
@@ -2160,6 +2160,7 @@ class Star:
         mask_band = (external_wavelengths >= wavelengths_2D.min()) & (external_wavelengths <= wavelengths_2D.max())
         external_normalized_flux_band = external_normalized_flux[mask_band]
         external_wavelengths_band = external_wavelengths[mask_band]
+        print(f'external_wavelengths_band is : {external_wavelengths_band}')
     
         # Create figure
         # Increase size and give space at bottom. 
@@ -2338,111 +2339,123 @@ class Star:
     
         return normalized_summed_flux_resampled, external_wavelengths_band, (bottom_spacial, top_spacial), final_include_spacial
 
-    def clean_flux_and_normalize3(self, epoch_num, band, bottom_spacial=None, top_spacial=None, include_spacial=None):
+    def clean_flux_and_normalize_interactive(self, epoch_num, band, bottom_spacial=None, top_spacial=None, include_spacial=None):
         """
-        Cleans the 2D flux image by selecting a 'clean' vertical region interactively using sliders,
+        Cleans the 2D flux image by selecting a 'clean' vertical region interactively using sliders, 
         normalizes the flux, and compares with external normalized data.
-
-        Parameters:
-            epoch_num: int, the epoch number for the observation
-            band: str, the band of the observation (e.g., 'VIS', 'UVB', etc.)
-            bottom_spacial: int, optional
-                Bottom spatial coordinate to include in the region of interest. Default is automatically detected.
-            top_spacial: int, optional
-                Top spatial coordinate to include in the region of interest. Default is automatically detected.
-            include_spacial: tuple(int, int), optional
-                A vertical range of spatial coordinates to include (representing the star region).
-                If not given, it will be selected interactively using sliders.
+    
+        Now, include_spacial is treated as absolute spatial coordinates in the full image,
+        not relative to bottom_spacial/top_spacial.
         """
-
+    
         # Load the 2D image
         fits_file_2D = self.load_2D_observation(epoch_num, band)
         image_data = fits_file_2D.primary_data
-
+    
         # Get wavelengths from the 2D data
         fits_file_1D = self.load_observation(epoch_num, band)
         wavelengths_2D = fits_file_1D.data['WAVE'][0]
-
+    
         # Detect spatial limits if not provided
         if bottom_spacial is None or top_spacial is None:
             if band == 'NIR':
                 bottom_spacial, top_spacial = (-52, -24)
+                bottom_spacial, top_spacial = (-52, -24)
             else:
                 bottom_spacial, top_spacial = (-68, -30)
+                bottom_spacial, top_spacial = (21, 76)
         print(f"The top limit is: {top_spacial}, and the bottom limit is: {bottom_spacial}")
-
+    
+        # # Convert negative indices
+        # height = image_data.shape[0]
+        # if bottom_spacial < 0:
+        #     bottom_spacial = height + bottom_spacial
+        # if top_spacial < 0:
+        #     top_spacial = height + top_spacial
+        # if top_spacial <= bottom_spacial:
+        #     top_spacial = bottom_spacial + 1
+    
         # Crop the image to the specified region
         image_data_central = image_data[bottom_spacial:top_spacial, :]
-        spacial_coordinate = np.arange(0, len(image_data), 1)[bottom_spacial:top_spacial]
-        print(f'spacial_coordinate: {spacial_coordinate}')
-
+        spacial_coordinate = np.arange(len(image_data))[bottom_spacial:top_spacial]
+    
         # Initial include_spacial guess if not provided
+        # include_spacial is absolute w.r.t the full image
         if include_spacial is None:
-            # For a start, just take the full range
-            include_spacial = (0, image_data_central.shape[0])
-
-        # Prepare normalization data
-        # Load anchor points for normalization
+            # Let's pick the full current range as default
+            include_spacial = (bottom_spacial, top_spacial)
+    
+        # Load normalization and external data
         anchor_points = self.load_property('norm_anchor_wavelengths', epoch_num, band='COMBINED')
-
-        # Load external normalized flux for comparison (same band)
         external_data = self.load_property('normalized_flux', epoch_num, band='COMBINED')
         external_normalized_flux = external_data['normalized_flux']
         external_wavelengths = external_data['wavelengths']
-
+    
         mask_band = (external_wavelengths >= wavelengths_2D.min()) & (external_wavelengths <= wavelengths_2D.max())
         external_normalized_flux_band = external_normalized_flux[mask_band]
         external_wavelengths_band = external_wavelengths[mask_band]
-
-        # --- Create the figure and axes ---
-        # Reduced figure size to fit screen better
-        fig = plt.figure(figsize=(9, 8))
-
+        print(f'external_wavelengths_band is : {external_wavelengths_band}')
+    
+        # Create figure
+        fig = plt.figure(figsize=(12, 9))
+        fig.subplots_adjust(left=0.08, right=0.95, top=0.92, bottom=0.25, wspace=0.4, hspace=0.6)
+    
         # Axes for the 2D image
         ax_image = plt.subplot2grid((3, 2), (0, 0), rowspan=2)
-        wave_and_sum = p2D.Plot2DImage(
+        p2D.Plot2DImage_for_cleaning(
             image_data_central,
             wavelengths_2D,
             band,
+            bottom_spacial,
+            top_spacial,
+            -bottom_spacial,
+            -top_spacial,
             title=f"2D Flux Image for {self.star_name} Band {band} (Epoch {epoch_num})",
             ValMin=-600,
             ValMax=600,
-            see_all=True,
             ax=ax_image
         )
-        ax_image.set_title("Adjust sliders below to select star region")
-
+        ax_image.set_title("Adjust sliders below to select star region", fontsize=12)
+    
         # Create the horizontal lines for include_spacial
-        line_incl_start = ax_image.axhline(include_spacial[0], color='red', linestyle='--')
-        line_incl_end = ax_image.axhline(include_spacial[1], color='red', linestyle='--')
-
+        # Note: We plot them relative to bottom_spacial so they appear correctly on the 2D image
+        # line_incl_start = ax_image.axhline(include_spacial[0] - bottom_spacial, color='red', linestyle='--')
+        # line_incl_end = ax_image.axhline(include_spacial[1] - bottom_spacial, color='red', linestyle='--')
+    
         # Axes for the summed flux vertically
         ax_summed_vertical = plt.subplot2grid((3, 2), (0, 1))
-
+    
         # Axes for the summed flux horizontally
         ax_summed_horizontal = plt.subplot2grid((3, 2), (1, 1))
-
+    
         # Axes for normalized flux comparison & difference
         ax_norm = plt.subplot2grid((3, 2), (2, 0))
         ax_diff = plt.subplot2grid((3, 2), (2, 1))
-
-        # Slider axes
-        slider_ax_start = plt.axes([0.1, 0.04, 0.35, 0.03])
-        slider_ax_end = plt.axes([0.55, 0.04, 0.35, 0.03])
-
-        # Finish button axis
-        finish_ax = plt.axes([0.45, 0.005, 0.1, 0.05])
-
-        # Create sliders
-        slider_start = Slider(slider_ax_start, 'Include Start', 0, image_data_central.shape[0] - 1,
-                              valinit=include_spacial[0], valstep=1)
-        slider_end = Slider(slider_ax_end, 'Include End', 1, image_data_central.shape[0], valinit=include_spacial[1],
-                            valstep=1)
-
-        # Finish button
+    
+        # Set initial y-limits for normalized flux and difference
+        ax_norm.set_ylim(-3, 5)
+        ax_diff.set_ylim(-3, 5)
+        ax_norm.set_xlim(np.min(wavelengths_2D)-10,np.max(wavelengths_2D)+10)
+        ax_diff.set_xlim(np.min(wavelengths_2D)-10,np.max(wavelengths_2D)+10)
+    
+        # Position sliders and button below the plots
+        slider_ax_start = plt.axes([0.1, 0.14, 0.35, 0.03])
+        slider_ax_end = plt.axes([0.55, 0.14, 0.35, 0.03])
+        slider_ax_bottom = plt.axes([0.1, 0.07, 0.35, 0.03])
+        slider_ax_top = plt.axes([0.55, 0.07, 0.35, 0.03])
+        finish_ax = plt.axes([0.45, 0.03, 0.1, 0.05])
+    
+        # Now include_start/end are absolute coordinates of the full image
+        # so we set the slider ranges to the full image.
+        slider_start = Slider(slider_ax_start, 'Include Start', 0, image_data.shape[0]-1, valinit=include_spacial[0], valstep=1)
+        slider_end = Slider(slider_ax_end, 'Include End', 0, image_data.shape[0], valinit=include_spacial[1], valstep=1)
+    
+        slider_bottom = Slider(slider_ax_bottom, 'Bottom Spacial', 0, image_data.shape[0]-2, valinit=bottom_spacial, valstep=1)
+        slider_top = Slider(slider_ax_top, 'Top Spacial', 1, image_data.shape[0]-1, valinit=top_spacial, valstep=1)
+    
         finish_button = Button(finish_ax, 'Finish', color='lightgoldenrodyellow', hovercolor='0.975')
         finished = {'value': False}
-
+    
         # Lines (for updating)
         line_summed_vertical, = ax_summed_vertical.plot([], [], color='blue', label='Summed Flux (vertical)')
         scatter_anchors = ax_summed_vertical.scatter([], [], color='red', label='Anchor Points')
@@ -2451,144 +2464,182 @@ class Star:
         line_norm_external, = ax_norm.plot([], [], color='orange', alpha=0.7, label='Non-Cleaned Normalized Flux')
         line_diff, = ax_diff.plot([], [], color='red', label='Flux Difference')
         line_reldiff, = ax_diff.plot([], [], color='purple', label='Relative Difference')
-
+    
         # Reference lines for relative difference
         ax_diff.axhline(0.1, color='red', linestyle='dashed')
         ax_diff.axhline(-0.1, color='red', linestyle='dashed')
-
-        # Set labels and legends
+    
         ax_summed_vertical.set_xlabel('Wavelength (nm)')
         ax_summed_vertical.set_ylabel('Summed Flux')
-        ax_summed_vertical.set_title('Vertical Summed Flux')
-        ax_summed_vertical.legend()
+        ax_summed_vertical.set_title('Vertical Summed Flux', fontsize=10)
+        ax_summed_vertical.legend(fontsize=9)
         ax_summed_vertical.grid(True)
-
-        ax_summed_horizontal.set_xlabel('Spacial Coordinate')
+    
+        ax_summed_horizontal.set_xlabel('Spatial Coordinate')
         ax_summed_horizontal.set_ylabel('Summed Flux')
-        ax_summed_horizontal.set_title('Horizontal Summed Flux')
-        ax_summed_horizontal.legend()
+        ax_summed_horizontal.set_title('Horizontal Summed Flux', fontsize=10)
+        ax_summed_horizontal.legend(fontsize=9)
         ax_summed_horizontal.grid(True)
-
+    
         ax_norm.set_xlabel('Wavelength (nm)')
         ax_norm.set_ylabel('Normalized Flux')
-        ax_norm.set_title('Normalized Flux Comparison')
-        ax_norm.legend()
+        ax_norm.set_title('Normalized Flux Comparison', fontsize=10)
+        ax_norm.legend(fontsize=9)
         ax_norm.grid(True)
-
+    
         ax_diff.set_xlabel('Wavelength (nm)')
         ax_diff.set_ylabel('Difference')
-        ax_diff.set_title('Flux & Relative Difference')
-        ax_diff.legend()
+        ax_diff.set_title('Flux & Relative Difference', fontsize=10)
+        ax_diff.legend(fontsize=9)
         ax_diff.grid(True)
-
+    
         def update_plots(val):
-            # Get current slider values
-            include_start = int(slider_start.val)
-            include_end = int(slider_end.val)
-            if include_end <= include_start:
-                return
+            current_bottom = int(slider_bottom.val)
+            current_top = int(slider_top.val)
+            if current_top <= current_bottom:
+                current_top = current_bottom + 1
+    
+            # get absolute include_start/end
+            abs_include_start = int(slider_start.val)
+            abs_include_end = int(slider_end.val)
+            if abs_include_end <= abs_include_start:
+                abs_include_end = abs_include_start + 1
+    
+            # Clamp include_start/end to [current_bottom, current_top]
+            # if abs_include_start < current_bottom:
+            #     abs_include_start = current_bottom
+            #     slider_start.set_val(abs_include_start)
+            # if abs_include_end > current_top:
+            #     abs_include_end = current_top
+            #     slider_end.set_val(abs_include_end)
+    
+            current_image_data_central = image_data[current_bottom:current_top, :]
+            current_spacial_coordinate = np.arange(len(image_data))[current_bottom:current_top]
+    
+            # Redraw the 2D image
+            ax_image.clear()
+            p2D.Plot2DImage_for_cleaning(
+                current_image_data_central,
+                wavelengths_2D, 
+                band,
+                current_bottom,
+                current_top,
+                abs_include_start,
+                abs_include_end,
+                title=f"2D Flux Image for {self.star_name} Band {band} (Epoch {epoch_num})",
+                ValMin=-600,
+                ValMax=600,
+                ax=ax_image
+            )
+            ax_image.set_title("Adjust sliders below to select star region", fontsize=12)
 
-            # Update horizontal lines on the 2D image
-            line_incl_start.set_ydata([include_start, include_start])
-            line_incl_end.set_ydata([include_end, include_end])
 
-            image_data_included = image_data_central[include_start:include_end, :]
-            included_spacial_coordinate = spacial_coordinate[include_start:include_end]
+            # # Re-draw horizontal lines after clearing
+            # ax_image.axhline(abs_include_start - current_bottom, color='red', linestyle='--')
+            # ax_image.axhline(abs_include_end - current_bottom, color='red', linestyle='--')
 
-            # Recompute all quantities
+    
+            # Indexing into the current_image_data_central using absolute coords
+            # relative indexes for the included region
+            rel_start = abs_include_start - current_bottom
+            rel_end = abs_include_end - current_bottom
+            image_data_included = current_image_data_central[rel_start:rel_end, :]
+            included_spacial_coordinate = current_spacial_coordinate[rel_start:rel_end]
+    
             summed_flux = np.sum(image_data_included, axis=0)
-
-            anchor_points_in_range = anchor_points[
-                (anchor_points >= wavelengths_2D.min()) & (anchor_points <= wavelengths_2D.max())
-                ]
+            anchor_points_in_range = anchor_points[(anchor_points >= wavelengths_2D.min()) & (anchor_points <= wavelengths_2D.max())]
             closest_indices = [np.abs(wavelengths_2D - ap).argmin() for ap in anchor_points_in_range]
-            selected_flux = [ut.robust_mean(summed_flux[max(0, index - 10):index + 10], 1) for index in closest_indices]
-
-            # Interpolate continuum
+            selected_flux = [ut.robust_mean(summed_flux[max(0, idx - 10):idx + 10], 1) for idx in closest_indices]
+    
             if len(anchor_points_in_range) > 1:
                 continuum_flux_interpolated = np.interp(wavelengths_2D, anchor_points_in_range, selected_flux)
             else:
                 continuum_flux_interpolated = np.full_like(wavelengths_2D, selected_flux[0] if selected_flux else 1.0)
-
+    
             normalized_summed_flux = summed_flux / continuum_flux_interpolated
-            normalized_summed_flux_resampled = np.interp(external_wavelengths_band, wavelengths_2D,
-                                                         normalized_summed_flux)
-
+            normalized_summed_flux_resampled = np.interp(external_wavelengths_band, wavelengths_2D, normalized_summed_flux)
+    
             flux_difference = normalized_summed_flux_resampled - external_normalized_flux_band
             relative_difference = flux_difference / external_normalized_flux_band
-
-            # Update lines
+    
+            # Update vertical summed flux
             line_summed_vertical.set_xdata(wavelengths_2D)
             line_summed_vertical.set_ydata(summed_flux)
             scatter_anchors.set_offsets(np.c_[anchor_points_in_range, selected_flux] if len(selected_flux) > 0 else [])
-
-            line_summed_horizontal.set_xdata(included_spacial_coordinate)
-            line_summed_horizontal.set_ydata(np.sum(image_data_included, axis=1))
-
-            line_norm_cleaned.set_xdata(external_wavelengths_band)
-            line_norm_cleaned.set_ydata(normalized_summed_flux_resampled)
-
-            line_norm_external.set_xdata(external_wavelengths_band)
-            line_norm_external.set_ydata(external_normalized_flux_band)
-
-            line_diff.set_xdata(external_wavelengths_band)
-            line_diff.set_ydata(flux_difference)
-
-            line_reldiff.set_xdata(external_wavelengths_band)
-            line_reldiff.set_ydata(relative_difference)
-
-            # Adjust limits
             ax_summed_vertical.relim()
             ax_summed_vertical.autoscale_view()
-
+    
+            # Update horizontal summed flux
+            line_summed_horizontal.set_xdata(included_spacial_coordinate)
+            line_summed_horizontal.set_ydata(np.sum(image_data_included, axis=1))
             ax_summed_horizontal.relim()
             ax_summed_horizontal.autoscale_view()
-
-            ax_norm.relim()
-            ax_norm.autoscale_view()
-
-            ax_diff.relim()
-            ax_diff.autoscale_view()
-
+    
+            # Update normalized flux and differences
+            line_norm_cleaned.set_xdata(wavelengths_2D)
+            line_norm_cleaned.set_ydata(normalized_summed_flux_resampled)
+            line_norm_external.set_xdata(wavelengths_2D)
+            line_norm_external.set_ydata(external_normalized_flux_band)
+    
+            line_diff.set_xdata(wavelengths_2D)
+            line_diff.set_ydata(flux_difference)
+            line_reldiff.set_xdata(wavelengths_2D)
+            line_reldiff.set_ydata(relative_difference)
+    
             fig.canvas.draw_idle()
-
+    
         def finish_callback(event):
             finished['value'] = True
             plt.close(fig)  # Close the figure to exit the loop
-
+    
         finish_button.on_clicked(finish_callback)
-
+    
         # Initial update
         update_plots(None)
-
         slider_start.on_changed(update_plots)
         slider_end.on_changed(update_plots)
-
-        plt.tight_layout()
+        slider_bottom.on_changed(update_plots)
+        slider_top.on_changed(update_plots)
+    
         plt.show()
-
-        # After the window is closed, return the final chosen values
-        final_include_spacial = (int(slider_start.val), int(slider_end.val))
-
-        # Recompute final arrays one last time for the returned values
-        image_data_included = image_data_central[final_include_spacial[0]:final_include_spacial[1], :]
-        summed_flux = np.sum(image_data_included, axis=0)
-
-        anchor_points_in_range = anchor_points[
-            (anchor_points >= wavelengths_2D.min()) & (anchor_points <= wavelengths_2D.max())
-            ]
+    
+        # After window closed, return chosen values
+        final_bottom = int(slider_bottom.val)
+        final_top = int(slider_top.val)
+        if final_top <= final_bottom:
+            final_top = final_bottom + 1
+    
+        final_include_start = int(slider_start.val)
+        final_include_end = int(slider_end.val)
+        if final_include_end <= final_include_start:
+            final_include_end = final_include_start + 1
+        # Clamp final includes
+        if final_include_start < final_bottom:
+            final_include_start = final_bottom
+        if final_include_end > final_top:
+            final_include_end = final_top
+    
+        final_include_spacial = (final_include_start, final_include_end)
+        final_image_data_central = image_data[final_bottom:final_top, :]
+        rel_start = final_include_start - final_bottom
+        rel_end = final_include_end - final_bottom
+        final_image_data_included = final_image_data_central[rel_start:rel_end, :]
+    
+        summed_flux = np.sum(final_image_data_included, axis=0)
+        anchor_points_in_range = anchor_points[(anchor_points >= wavelengths_2D.min()) & (anchor_points <= wavelengths_2D.max())]
         closest_indices = [np.abs(wavelengths_2D - ap).argmin() for ap in anchor_points_in_range]
-        selected_flux = [ut.robust_mean(summed_flux[max(0, index - 10):index + 10], 1) for index in closest_indices]
-
+        selected_flux = [ut.robust_mean(summed_flux[max(0, idx - 10):idx + 10], 1) for idx in closest_indices]
+    
         if len(anchor_points_in_range) > 1:
             continuum_flux_interpolated = np.interp(wavelengths_2D, anchor_points_in_range, selected_flux)
         else:
             continuum_flux_interpolated = np.full_like(wavelengths_2D, selected_flux[0] if selected_flux else 1.0)
-
+    
         normalized_summed_flux = summed_flux / continuum_flux_interpolated
         normalized_summed_flux_resampled = np.interp(external_wavelengths_band, wavelengths_2D, normalized_summed_flux)
-
-        return normalized_summed_flux_resampled, external_wavelengths_band, (
-        bottom_spacial, top_spacial), final_include_spacial
-
-
+    
+        return normalized_summed_flux_resampled, external_wavelengths_band, (final_bottom, final_top), final_include_spacial
+    
+    
+    
+    

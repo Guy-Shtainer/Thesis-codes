@@ -4,13 +4,17 @@ import re
 import datetime
 import shutil
 import pprint
+import numpy as np
 from astropy.io import fits
+from astropy.time import Time
 import pandas as pd
 from collections.abc import MutableMapping
+from collections import defaultdict
 import multiprocess
 from IPython.display import display
 from FitsClass import FITSFile as myfits 
 from StarClass import Star
+from NRESClass import NRES
 import specs
 
 
@@ -34,11 +38,15 @@ class ObservationManager:
         Example:
         obs_manager = ObservationManager(data_dir='Data/')
         """
-        self.star_names = specs.star_names  # List of star names loaded from the specs file
-        self.data_dir = data_dir  # Base path where all the organized star data is stored
+        # Add a short list of star names that use the NRES class
+        self.NRES_stars = ['WR 52', 'WR17']
+        
+        self.star_names = np.concatenate((specs.star_names,self.NRES_stars))  # from specs.py
+        self.data_dir = data_dir
         self.specs_filepath = specs_filepath
         self.backup_dir = backup_dir
         self.star_instances = {}
+
 
     def create_star_instance(self, star_name, data_dir = None, backup_dir = None):
         """
@@ -53,15 +61,16 @@ class ObservationManager:
         - Star instance: A new instance of the Star class if the star exists.
         """
 
-        if data_dir == None:
+        if data_dir is None:
             data_dir = self.data_dir
-
-        if backup_dir == None:
+        if backup_dir is None:
             backup_dir = self.backup_dir
 
-        # Create and return the Star instance
-        star_instance = Star(star_name=star_name, data_dir = data_dir, backup_dir = backup_dir)
-        return star_instance
+        # If the star is in the NRES list, return an NRES object
+        if star_name in self.NRES_stars:
+            return NRES(star_name=star_name, data_dir=data_dir, backup_dir=backup_dir)
+        else:
+            return Star(star_name=star_name, data_dir=data_dir, backup_dir=backup_dir)
 
     def load_star_instance(self, star_name, data_dir = None, backup_dir = None):
         """
@@ -79,23 +88,25 @@ class ObservationManager:
         Raises:
         - KeyError: If there is an unexpected issue accessing the star instances.
         """
-         # Check if the star exists in the list of star names
+        # 1) Check if star is recognized at all
         if star_name not in self.star_names:
             print(f"Error: Star '{star_name}' is not in the list of star names in specs.py.")
             return None
 
-        if data_dir == None:
+        # 2) Set defaults
+        if data_dir is None:
             data_dir = self.data_dir
-
-        if backup_dir == None:
+        if backup_dir is None:
             backup_dir = self.backup_dir
-            
-        try:
+
+        # 3) If already loaded this star, just return it
+        if star_name in self.star_instances:
             return self.star_instances[star_name]
-        except:
-            star_instance = self.create_star_instance(star_name, data_dir = data_dir, backup_dir = backup_dir)
-            self.star_instances[star_name] = star_instance
-            return star_instance
+
+        # 4) Otherwise, create it using create_star_instance
+        star_instance = self.create_star_instance(star_name, data_dir=data_dir, backup_dir=backup_dir)
+        self.star_instances[star_name] = star_instance
+        return star_instance
     
     def clean_all_stars(self):
         """
@@ -249,6 +260,305 @@ class ObservationManager:
                     except Exception as e:
                         print(f"Error processing {filepath}: {e}")
 
+    def organize_nres_files(self, fits_directory, output_directory=None):
+        """
+        Example method for organizing .fits.fz files.
+    
+        Using astropy.time.Time for date parsing to avoid Python version issues with fromisoformat().
+        """
+    
+        if output_directory is None:
+            output_directory = self.data_dir
+    
+        fits_files = glob.glob(os.path.join(fits_directory, '**', '*.fits.fz'), recursive=True)
+        print(f"Found {len(fits_files)} .fits.fz files in {fits_directory}")
+    
+        if not fits_files:
+            print("No .fits.fz files found. Nothing to organize.")
+            return
+    
+        # Collect metadata
+        files_metadata = []
+        for fpath in fits_files:
+            try:
+                with fits.open(fpath) as hdul:
+
+                    # Derive file_type from filename
+                    header_num = 1
+                    basename_lower = os.path.basename(fpath).lower()
+                    if '1d' in basename_lower:
+                        file_type = '1D'
+                        header_num = 0
+                    elif '2d' in basename_lower:
+                        file_type = '2D'
+                    elif 'e00' in basename_lower:
+                        file_type = 'raw'
+                    else:
+                        file_type = 'unknown'
+                    
+                    header = hdul[header_num].header
+                    star_name = header.get('OBJECT', 'Unknown').strip()
+    
+                    date_obs_str = header.get('DATE-OBS')
+                    if not date_obs_str:
+                        print(f"Skipping {fpath}: Missing DATE-OBS in header.")
+                        continue
+    
+                    # Use astropy's Time to parse
+                    try:
+                        t = Time(date_obs_str, format='isot')  # or 'fits'
+                        date_obs = t.to_datetime()
+                    except ValueError:
+                        print(f"Skipping {fpath}: Could not parse DATE-OBS '{date_obs_str}'")
+                        continue
+    
+                    
+    
+                    parent_dir = os.path.abspath(os.path.dirname(fpath))
+    
+                    files_metadata.append({
+                        'star': star_name,
+                        'date_obs': date_obs,
+                        'file_type': file_type,
+                        'parent_dir': parent_dir,
+                        'full_path': fpath,
+                    })
+    
+            except Exception as e:
+                print(f"Error reading {fpath}: {e}")
+                continue
+    
+        # Group by star + file_type
+        grouped = defaultdict(lambda: defaultdict(list))
+        for fd in files_metadata:
+            grouped[fd['star']][fd['file_type']].append(fd)
+    
+        # Organize files
+        for star_name, type_dict in grouped.items():
+            print(f"\nOrganizing files for star: {star_name}")
+    
+            for file_type, file_list in type_dict.items():
+                # Sort by date_obs ascending
+                file_list.sort(key=lambda d: d['date_obs'])
+    
+                # Base dir
+                base_dir = os.path.join(output_directory, star_name, file_type)
+                os.makedirs(base_dir, exist_ok=True)
+    
+                epoch_counter = 1
+                epoch_folder = os.path.join(base_dir, f"epoch{epoch_counter}")
+                os.makedirs(epoch_folder, exist_ok=True)
+    
+                prev_date = None
+                prev_parent = None
+                file_index_in_epoch = 0
+    
+                for fdict in file_list:
+                    current_date = fdict['date_obs']
+                    current_parent = fdict['parent_dir']
+    
+                    if prev_date is not None:
+                        # Compare times
+                        date_diff_days = abs((current_date - prev_date).days)
+                        folder_changed = (current_parent != prev_parent)
+                        if date_diff_days > 1 or folder_changed:
+                            epoch_counter += 1
+                            epoch_folder = os.path.join(base_dir, f"epoch{epoch_counter}")
+                            os.makedirs(epoch_folder, exist_ok=True)
+                            file_index_in_epoch = 0
+    
+                    file_index_in_epoch += 1
+                    new_filename = f"spectra{file_index_in_epoch}.fits.fz"
+                    dest_path = os.path.join(epoch_folder, new_filename)
+    
+                    # Copy the file
+                    try:
+                        shutil.copy2(fdict['full_path'], dest_path)
+                        print(f"  Copied -> {dest_path} (DATE-OBS={current_date}, epoch={epoch_counter})")
+                    except Exception as e:
+                        print(f"  Error copying {fdict['full_path']}: {e}")
+    
+                    prev_date = current_date
+                    prev_parent = current_parent
+    
+        print("\nNRES files organized successfully!")
+
+    def organize_nres_files2(self, rawdata_directory, output_directory=None):
+        """
+        Organize NRES .fits.fz files into:
+        
+          output_directory/
+            star_name/
+              epoch1/
+                1/
+                  1D/
+                    file1.fits.fz
+                  2D/
+                    file2.fits.fz
+                  raw/
+                    file3.fits.fz
+                2/
+                  1D/
+                  2D/
+                  raw/
+              epoch2/
+                ...
+        
+        Steps:
+          1) Parse each .fits.fz to get (star_name, date_obs, data_type).
+          2) Group by (star_name, rounded_date_obs) so that each group 
+             can hold up to 3 data_types (1D, 2D, raw).
+          3) Sort these groups by date_obs ascending.
+          4) Increment 'epoch' whenever gap > 1 day from the previous group (in the same star).
+          5) Within an epoch, each group is assigned a 'spectrum' index. 
+             Under that spectrum, create subfolders named 1D/2D/raw, 
+             putting the corresponding file(s) in each subfolder.
+        """
+    
+        if output_directory is None:
+            output_directory = self.data_dir
+    
+        # 1) Find all .fits.fz files
+        all_fits = glob.glob(os.path.join(rawdata_directory, '**', '*.fits.fz'), recursive=True)
+        if not all_fits:
+            print("No .fits.fz files found under rawdata_directory. Nothing to organize.")
+            return
+    
+        print(f"Found {len(all_fits)} .fits.fz files in {rawdata_directory}.")
+    
+        # 2) For each file, read star_name, date_obs, data_type
+        file_list = []
+        for fpath in all_fits:
+            basename = os.path.basename(fpath).strip().lower()
+    
+            # Infer data_type from filename
+            header_num = 1
+            if '1d' in basename:
+                data_type = '1D'
+                header_num = 0
+            elif '2d' in basename:
+                data_type = '2D'
+            elif 'e00' in basename:
+                data_type = 'raw'
+            else:
+                data_type = 'unknown'  # or skip if you prefer
+    
+            # Read star_name & date_obs from header
+            star_name = 'Unknown'
+            date_obs  = None
+            try:
+                with fits.open(fpath) as hdul:
+                    hdr = hdul[header_num].header
+                    star_name = hdr.get('OBJECT', 'Unknown').strip()
+    
+                    date_str = hdr.get('DATE-OBS')
+                    if date_str:
+                        t = Time(date_str, format='isot')  # robust parse
+                        date_obs = t.to_datetime()
+            except Exception as e:
+                print(f"Error reading {fpath}: {e}")
+                continue
+    
+            if not date_obs:
+                print(f"No valid DATE-OBS in {fpath}. Skipping.")
+                continue
+    
+            file_list.append({
+                'path':       fpath,
+                'basename':   os.path.basename(fpath),
+                'star':       star_name,
+                'date_obs':   date_obs,
+                'data_type':  data_type
+            })
+    
+        if not file_list:
+            print("No valid NRES .fits.fz files with DATE-OBS found.")
+            return
+    
+        # 3) Group by (star_name, "observation time" to nearest second).
+        #    We'll treat anything with the exact same second as the same "spectrum".
+        #    If you need more tolerant grouping (e.g., ±2s), adapt below.
+        
+        # star_obs[star_name] = dictionary:
+        #   key = date_obs_rounded (datetime, truncated or rounded to second)
+        #   val = list of dict(...) for each file that has that date
+        star_obs = defaultdict(lambda: defaultdict(list))
+    
+        for info in file_list:
+            # round to nearest second
+            # or use e.g.:   date_obs_rounded = info['date_obs'].replace(microsecond=0)
+            # or a custom round function to handle weird microseconds
+            dt = info['date_obs']
+            date_obs_rounded = dt.replace(microsecond=0)
+            
+            star_obs[info['star']][date_obs_rounded].append(info)
+    
+        # Now each star has a dictionary { date_rounded -> [files with 1D/2D/raw] }
+    
+        # 4) For each star, we want to sort by the actual date and then define epochs.
+        for star_name, date_dict in star_obs.items():
+            # Make a sorted list of (date_rounded, [files]) by the actual date_rounded ascending
+            sorted_times = sorted(date_dict.keys())
+            
+            # We'll store them as a list of (datetime, list_of_files, real_min_date_for_sorting)
+            # Because some 1D/2D might have slightly different microseconds, if you want 
+            # the earliest or average among them. For now, we just use the "rounded" as is.
+            grouped_observations = []
+            for dt_rounded in sorted_times:
+                # Among the files in date_dict[dt_rounded], we might have slightly different microseconds
+                # let's get the earliest real date to sort them precisely
+                real_min_date = min(x['date_obs'] for x in date_dict[dt_rounded])
+                grouped_observations.append((dt_rounded, date_dict[dt_rounded], real_min_date))
+    
+            # Sort by real_min_date just in case there's any sub-second difference
+            grouped_observations.sort(key=lambda x: x[2])
+    
+            # Build star_dir
+            star_dir = os.path.join(output_directory, star_name)
+            os.makedirs(star_dir, exist_ok=True)
+    
+            epoch_counter = 1
+            epoch_dir = os.path.join(star_dir, f"epoch{epoch_counter}")
+            os.makedirs(epoch_dir, exist_ok=True)
+    
+            prev_date = None
+            # keep track of spectra index within the epoch
+            spectrum_index = 0
+    
+            for idx, (dt_rounded, files_in_this_obs, real_date) in enumerate(grouped_observations):
+                if prev_date is not None:
+                    gap_days = (real_date - prev_date).days
+                    # If gap > 1 day => new epoch
+                    if abs(gap_days) > 1.0:
+                        epoch_counter += 1
+                        epoch_dir = os.path.join(star_dir, f"epoch{epoch_counter}")
+                        os.makedirs(epoch_dir, exist_ok=True)
+                        spectrum_index = 0
+    
+                spectrum_index += 1
+    
+                # So: epochN/spectrum_index, and inside that folder -> 1D/2D/raw as needed
+                spec_dir = os.path.join(epoch_dir, str(spectrum_index))
+                os.makedirs(spec_dir, exist_ok=True)
+    
+                # Now place each file in [files_in_this_obs] into the appropriate data_type subfolder
+                for fdict in files_in_this_obs:
+                    dt_folder = fdict['data_type']
+                    dt_path = os.path.join(spec_dir, dt_folder)
+                    os.makedirs(dt_path, exist_ok=True)
+    
+                    src = fdict['path']
+                    dst = os.path.join(dt_path, fdict['basename'])
+    
+                    try:
+                        shutil.copy2(src, dst)
+                        print(f"Copied '{src}' => '{dst}' [star={star_name}, epoch={epoch_counter}, spec={spectrum_index}]")
+                    except Exception as e:
+                        print(f"Error copying {src} to {dst}: {e}")
+    
+                prev_date = real_date
+    
+        print("\nNRES files organized successfully!")
 
     
     def organize_star_2D_images(self, fits_directory, output_directory=None):

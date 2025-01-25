@@ -412,6 +412,140 @@ class Simulations:
             print(f"[ERROR] Failed to load file: {file_path}. Error: {e}")
             return None, None
 
+    def save_property(self, property_name, property_data, overwrite=False, backup=True):
+        """
+        Saves the specified property data as an npz file in the 'output' directory.
+
+        Parameters:
+            property_name (str): Name of the property to save.
+            property_data (Any): Data to be saved.
+            overwrite (bool): Whether to overwrite an existing file.
+            backup (bool): Whether to create a backup before overwriting.
+        """
+        output_dir = os.path.join(self.output_dir, "output")
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, f"{property_name}.npz")
+
+        if os.path.exists(output_path):
+            if not overwrite:
+                raise FileExistsError(f"Cannot save property, file already exists: {output_path}. Set overwrite=True to proceed.")
+            if backup:
+                print(f"File exists. Creating a backup before overwriting: {output_path}")
+                self.backup_property(output_path, overwrite)
+
+        # Save data to npz file
+        if isinstance(property_data, dict):
+            np.savez(output_path, **property_data)
+        else:
+            np.savez(output_path, data=property_data)
+
+        print(f"Property saved at {output_path}")
+
+    def backup_property(self, output_path, overwrite):
+        """
+        Creates a backup of a file before overwriting or deleting it.
+
+        Parameters:
+            output_path (str): Path to the file to back up.
+            overwrite (bool): Whether the backup is for overwriting or deletion.
+        """
+        if os.path.exists(output_path):
+            backup_type = 'overwritten' if overwrite else 'deleted'
+            backup_dir = os.path.join("Backups", backup_type, *os.path.dirname(output_path).split(os.sep)[1:])
+            os.makedirs(backup_dir, exist_ok=True)
+
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_file_name = f"{os.path.basename(output_path).split('.')[0]}_backup_{timestamp}.npz"
+            backup_path = os.path.join(backup_dir, backup_file_name)
+
+            os.rename(output_path, backup_path)
+            print(f"Backup created at {backup_path}")
+        else:
+            raise FileNotFoundError(f"Cannot create backup, original file not found: {output_path}")
+
+    def list_available_properties(self):
+        """
+        Lists all properties in the 'output' directory.
+
+        Returns:
+            None
+        """
+        output_dir = os.path.join(self.output_dir, "output")
+        if not os.path.exists(output_dir):
+            print(f"No properties found in '{output_dir}'.")
+            return
+
+        print(f"Available properties in '{output_dir}':")
+        for prop in os.listdir(output_dir):
+            print(f" - {prop}")
+
+    def load_property(self, property_name):
+        """
+        Loads the specified property from the 'output' directory.
+
+        Parameters:
+            property_name (str): Name of the property to load.
+
+        Returns:
+            Any: Loaded property data.
+        """
+        output_path = os.path.join(self.output_dir, "output", f"{property_name}.npz")
+        if not os.path.exists(output_path):
+            raise FileNotFoundError(f"Property '{property_name}' not found at {output_path}.")
+
+        return self._load_file(output_path)
+
+    def delete_files(self, property_to_delete='', backup_flag=True):
+        """
+        Deletes specified files in the 'output' directory.
+
+        Parameters:
+            property_to_delete (str): Name of the property to delete.
+            backup_flag (bool): Whether to back up files before deletion.
+        """
+        output_dir = os.path.join(self.output_dir, "output")
+        if not os.path.exists(output_dir):
+            print(f"No 'output' directory found at {self.output_dir}.")
+            return
+
+        # Get list of matching files
+        pattern = os.path.join(output_dir, f"{property_to_delete}*")
+        matching_files = glob.glob(pattern)
+
+        if not matching_files:
+            print(f"No files matching '{property_to_delete}' found in '{output_dir}'.")
+            return
+
+        # Delete each matching file
+        for file_path in matching_files:
+            if backup_flag:
+                self.backup_property(file_path, overwrite=False)
+            os.remove(file_path)
+            print(f"Deleted file: {file_path}")
+
+    def _load_file(self, file_path):
+        """
+        Helper method to load data from a file.
+
+        Parameters:
+            file_path (str): Path to the file to load.
+
+        Returns:
+            Any: Loaded data.
+        """
+        try:
+            if file_path.endswith('.npz'):
+                with np.load(file_path, allow_pickle=True) as data:
+                    if 'data' in data:
+                        return data['data']
+                    else:
+                        return dict(data)
+            else:
+                raise ValueError(f"Unsupported file format: {file_path}")
+        except Exception as e:
+            print(f"Error loading file '{file_path}': {e}")
+            return None
+
 
 ######################################
 # Standalone usage example (demo)
