@@ -687,7 +687,9 @@ class NRES:
 
     def plot_raw_spectra(self, epoch_num, spectra_num,
                          subtract_sky=True,
-                         blaze_correction=False):
+                         blaze_correction=False,
+                         just_sky=False,
+                         just_target=True):
         """
         Plot raw spectra for this NRES star from a single epoch & spectrum,
         filtering out any zero-flux points.
@@ -706,6 +708,18 @@ class NRES:
         blaze_correction : bool
             If True, divides both sky and object by their respective blaze arrays
             before plotting.
+        just_sky : bool
+            If True, only plots the sky component(s).
+        just_target : bool
+            If True, only plots the target (object) component(s).
+    
+        Notes
+        -----
+        - If both just_sky=False and just_target=False, no plots will be produced.
+          You might want to handle that case (e.g., error out or default to plotting both).
+        - If both just_sky=True and just_target=True, you'll get both traces (or
+          one trace if subtract_sky=True, since that merges the target’s trace into
+          (object - sky)).
     
         Behavior
         --------
@@ -715,11 +729,8 @@ class NRES:
               data['flux']       -> array of shape (2*N, ...)
               data['blaze']      -> array of shape (2*N, ...) [if relevant]
           - Filters out any flux == 0 points before plotting.
-          - Plots each order's sky and object, or if subtract_sky=True, plots (obj - sky).
-    
-        Example
-        -------
-          star.plot_raw_spectra(1, 2, subtract_sky=True, blaze_correction=True)
+          - If subtract_sky=True, it plots (object - sky). Otherwise, it plots
+            sky and object separately (as determined by `just_sky`/`just_target`).
         """
     
         # 1) Load the 1D data
@@ -745,6 +756,12 @@ class NRES:
     
         # We'll assume pairs: (sky = even, object = odd)
         n_pairs = orders // 2
+    
+        # Check for the trivial case where user sets both flags to False
+        if not just_sky and not just_target:
+            print("Both just_sky=False and just_target=False → no plots to produce.")
+            return
+    
         for order_idx in range(n_pairs):
             sky_idx = 2 * order_idx
             obj_idx = 2 * order_idx + 1
@@ -769,29 +786,40 @@ class NRES:
                 flux_sky[valid_sky] /= blaze_sky[valid_sky]
                 flux_obj[valid_obj] /= blaze_obj[valid_obj]
     
+            # --- Plotting Logic ---
             if subtract_sky:
-                # Subtract sky from object
-                flux_obj = flux_obj - flux_sky
+                # We'll plot (object - sky) as the 'object flux' (if just_target)
+                flux_obj_sub = flux_obj - flux_sky
+                mask_sub = (flux_obj_sub != 0) & (wave_obj != 0)
     
-                # Filter out zero-flux points
-                mask_obj = (flux_obj != 0) & (wave_obj != 0)
-                w_obj_filtered = wave_obj[mask_obj]
-                f_obj_filtered = flux_obj[mask_obj]
+                w_obj_filtered = wave_obj[mask_sub]
+                f_obj_filtered = flux_obj_sub[mask_sub]
     
-                plt.plot(w_obj_filtered, f_obj_filtered)
+                if just_target:
+                    # Plot the subtracted result as the "target"
+                    plt.plot(w_obj_filtered, f_obj_filtered, label="(obj - sky)" if order_idx == 0 else "")
+                if just_sky:
+                    # If we want sky alone as well, we plot the original sky
+                    mask_sky = (flux_sky != 0) & (wave_sky != 0)
+                    w_sky_filtered = wave_sky[mask_sky]
+                    f_sky_filtered = flux_sky[mask_sky]
+                    plt.plot(w_sky_filtered, f_sky_filtered, label="sky" if order_idx == 0 else "")
+    
             else:
-                # Filter sky
-                mask_sky = (flux_sky != 0)
-                w_sky_filtered = wave_sky[mask_sky]
-                f_sky_filtered = flux_sky[mask_sky]
+                # No subtraction: plot sky and/or object as separate lines
+                if just_sky:
+                    mask_sky = (flux_sky != 0) & (wave_sky != 0)
+                    w_sky_filtered = wave_sky[mask_sky]
+                    f_sky_filtered = flux_sky[mask_sky]
+                    plt.plot(w_sky_filtered, f_sky_filtered,
+                             label="sky" if order_idx == 0 else "")
     
-                # Filter object
-                mask_obj = (flux_obj != 0)
-                w_obj_filtered = wave_obj[mask_obj]
-                f_obj_filtered = flux_obj[mask_obj]
-    
-                plt.plot(w_sky_filtered, f_sky_filtered)
-                plt.plot(w_obj_filtered, f_obj_filtered)
+                if just_target:
+                    mask_obj = (flux_obj != 0) & (wave_obj != 0)
+                    w_obj_filtered = wave_obj[mask_obj]
+                    f_obj_filtered = flux_obj[mask_obj]
+                    plt.plot(w_obj_filtered, f_obj_filtered,
+                             label="object" if order_idx == 0 else "")
     
         plt.title(f"NRES Raw Spectra: {self.star_name}, epoch={epoch_num}, spec={spectra_num}")
         plt.xlabel("Wavelength (A)")
@@ -800,6 +828,7 @@ class NRES:
         plt.grid(True)
         plt.tight_layout()
         plt.show()
+
     
     def _stitch_spectra_by_snr(self,wave_list, flux_list, snr_list):
         """
@@ -842,6 +871,21 @@ class NRES:
         combined_wave = np.flip(wave_list[0].copy())
         combined_flux = np.flip(flux_list[0].copy())
         combined_snr  = np.flip(snr_list[0].copy())
+
+        # Remove any zeros in wave, flux, or SNR
+        # mask = (combined_wave != 0) & (combined_flux != 0) & (combined_snr != 0)
+        mask = (combined_wave != 0) 
+        combined_wave = combined_wave[mask]
+        combined_flux = combined_flux[mask]
+        combined_snr  = combined_snr[mask]
+        
+        # Ensure ascending order (in case flipping gave you descending order)
+        # (Only needed if the original was descending. 
+        #  If flip already yields ascending, you can skip this sort.)
+        idx_sort = np.argsort(combined_wave)
+        combined_wave = combined_wave[idx_sort]
+        combined_flux = combined_flux[idx_sort]
+        combined_snr  = combined_snr[idx_sort]
         
         # Loop over all other spectra in the list
         for i in range(1, len(wave_list)):
@@ -849,6 +893,19 @@ class NRES:
             fl_current = np.flip(flux_list[i])
             sn_current = np.flip(snr_list[i])
             # print(wv_current[500:530])
+
+            # Remove zeros
+            # mask_cur = (wv_current != 0) & (fl_current != 0) & (sn_current != 0)
+            mask_cur = (wv_current != 0)
+            wv_current = wv_current[mask_cur]
+            fl_current = fl_current[mask_cur]
+            sn_current = sn_current[mask_cur]
+        
+            # Sort ascending if needed
+            idx_sort_cur = np.argsort(wv_current)
+            wv_current   = wv_current[idx_sort_cur]
+            fl_current   = fl_current[idx_sort_cur]
+            sn_current   = sn_current[idx_sort_cur]
             
             # 1) Identify the overlap between combined_wave and wv_current
             overlap_start, overlap_end = find_overlap(combined_wave, wv_current)
@@ -861,11 +918,18 @@ class NRES:
                                         (combined_wave <= overlap_end))[0]
                 idx_current  = np.where((wv_current   >= overlap_start) & 
                                         (wv_current   <= overlap_end))[0]
+                # print(f'overlaps are: {overlap_start} and {overlap_end}')
+                # print(f'wave in combined: {combined_wave[idx_combined]}')
+                # print(f'wave in current: {wv_current[idx_current]}')
+                # print(f'len of overlap in combined: {len(combined_wave[idx_combined[0]:])}, and also {len(idx_combined)} and maximum of combined: {max(combined_wave)}')
+                # print(f'len of overlap in wv_current: {len(wv_current)}, and also {len(idx_current)} and minimum of current: {min(wv_current)}')
     
                 # 2) For correct averaging, we want flux at the same wavelength points.
                 #    Whichever spectrum has finer sampling, we will interpolate the other one onto it.
                 dw_combined = np.mean(np.diff(combined_wave[idx_combined])) if len(idx_combined) > 1 else 1e10
                 dw_current  = np.mean(np.diff(wv_current[idx_current]))     if len(idx_current)  > 1 else 1e10
+                # print(np.diff(combined_wave[idx_combined]))
+                # print(np.diff(wv_current[idx_current]))
                 # print(dw_combined <= dw_current)
     
                 if dw_combined <= dw_current:
@@ -873,6 +937,7 @@ class NRES:
                     wv_fine  = combined_wave[idx_combined]
                     fl_fine  = combined_flux[idx_combined]
                     sn_fine  = combined_snr[idx_combined]
+                    # print(f'sn_fine is: {sn_fine[:50]}')
                     
                     fl_interp = np.interp(wv_fine, wv_current[idx_current], fl_current[idx_current])
                     sn_interp = np.interp(wv_fine, wv_current[idx_current], sn_current[idx_current])
@@ -881,7 +946,8 @@ class NRES:
                     w1 = sn_fine**2
                     w2 = sn_interp**2
                     wsum = w1 + w2
-                    # print(f'w1 : {w1[10:20]}, w2: {w2[10:20]}, sum: {wsum[10:20]}')
+                    # print(f'w1/w2 : {w1[:20]/w2[:20]}, \nsum: {wsum[:20]}')
+                    # print(f'the last wavelength of the finer is: {wv_fine[-1]} and the first of the interp is: {wv_current[0]}')
                     
                     # Weighted flux and updated SNR in the overlap
                     combined_flux[idx_combined] = (fl_fine * w1 + fl_interp * w2) / wsum
@@ -943,7 +1009,8 @@ class NRES:
         return combined_wave, combined_flux, combined_snr
     
     def plot_stitched_spectra(self, epoch_num, spectra_num,
-                              subtract_sky=True):
+                              subtract_sky=True,
+                              my_SNR = False):
         """
         Load multiple (sky, object) pairs, optionally subtract sky and do blaze 
         correction, then stitch them with SNR weighting. Plots one final curve.
@@ -981,7 +1048,13 @@ class NRES:
         if orders == 0:
             print("No wavelength data found in the FITS. Aborting.")
             return
-    
+
+        # Function to calculate a moving standard deviation
+        def moving_std(data, window):
+            half_window = window // 2
+            padded_data = np.pad(data, pad_width=half_window, mode='reflect')
+            return np.array([np.std(padded_data[i:i + window]) for i in range(len(data))])
+
         # 2) We'll collect (wave_obj, flux_obj, snr_obj) for each order
         wave_list = []
         flux_list = []
@@ -992,10 +1065,55 @@ class NRES:
             wave_list.append(wave_arrays[order_idx*2+1])
             tmp_current_fluxes = (flux_arrays[order_idx*2+1]/blaze_arrays[order_idx*2+1]-flux_arrays[order_idx*2]/blaze_arrays[order_idx*2])
             flux_list.append(tmp_current_fluxes)
-            snr_list.append(flux_list[-1]/np.sqrt(np.pow(uncertainty_arrays[order_idx*2+1]/blaze_arrays[order_idx*2+1],2) + 
-                                                          np.pow(uncertainty_arrays[order_idx*2]/blaze_arrays[order_idx*2],2) + 
-                                                          np.pow(flux_arrays[order_idx*2+1]*blaze_errors_arrays[order_idx*2+1]/np.pow(blaze_arrays[order_idx*2+1],2),2) +
-                                                          np.pow(flux_arrays[order_idx*2]*blaze_errors_arrays[order_idx*2]/np.pow(blaze_arrays[order_idx*2],2),2)))
+
+
+            if my_SNR:
+                # Window size: half-width
+                window_size = 20
+            
+                # flux_corrected is the final flux after blaze correction + sky subtraction.
+                # e.g.: flux_corrected = flux_obj_corrected - flux_sky_corrected
+                flux_corrected = tmp_current_fluxes  
+            
+                n_points = len(flux_corrected)
+            
+                # Prepare array to store local uncertainties
+                local_uncertainty = np.full_like(flux_corrected, np.nan)
+            
+                for i in range(n_points):
+                    # Define left/right boundaries for the local window
+                    start_idx = max(0, i - window_size)
+                    end_idx = min(n_points, i + window_size + 1)  # +1 because slicing is exclusive
+            
+                    # Extract the local slice of the flux
+                    window_flux = flux_corrected[start_idx:end_idx]
+            
+                    # 1) Compute robust mean of the window (removing outliers >3-sigma).
+                    local_mean = ut.robust_mean(window_flux, 3)
+            
+                    # 2) Compute robust std using the same or similar outlier rule.
+                    local_std = ut.robust_std(window_flux, 3)
+            
+                    # If your robust_std function automatically removes outliers around
+                    # a separate robust mean, you might want to confirm that it's 
+                    # consistent with local_mean above, or simply rely on robust_std 
+                    # for the final value.
+            
+                    local_uncertainty[i] = local_std if local_std > 0 else np.nan
+            
+                # Compute local SNR = flux / local_uncertainty
+                local_snr = np.where(local_uncertainty > 0,
+                                     flux_corrected / local_uncertainty,
+                                     np.nan)
+            
+                # Append or store the SNR array
+                snr_list.append(local_snr)
+            else:
+                snr_list.append(flux_list[-1]/np.sqrt(np.pow(uncertainty_arrays[order_idx*2+1]/blaze_arrays[order_idx*2+1],2) + 
+                         np.pow(uncertainty_arrays[order_idx*2]/blaze_arrays[order_idx*2],2) + 
+                         np.pow(flux_arrays[order_idx*2+1]*blaze_errors_arrays[order_idx*2+1]/np.pow(blaze_arrays[order_idx*2+1],2),2) +
+                         np.pow(flux_arrays[order_idx*2]*blaze_errors_arrays[order_idx*2]/np.pow(blaze_arrays[order_idx*2],2),2)))
+                    
     
         # 3) Stitch them (assuming you have self.stitch_spectra_by_snr)
         wave_list = np.flip(wave_list)
