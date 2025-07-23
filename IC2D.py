@@ -8,6 +8,11 @@ import specs
 import TwoDImage as p2D
 import utils as ut
 
+# GPT 23/7/25 17:49
+# at the top of clean_flux_and_normalize_interactive (or near other constants)
+SNR_PROP_NAME = 'snr_bounds'          # dict saved to star file:
+                                      # {'red': [x1,x2], 'blue': [x3,x4]}
+
 def clean_flux_and_normalize_interactive(
         image_data,
         wavelengths_2D,
@@ -21,7 +26,8 @@ def clean_flux_and_normalize_interactive(
         star=None,  # NEW: pass in the star instance
         bottom_spacial=None,
         top_spacial=None,
-        include_spacial=None
+        include_spacial=None,
+        snr_cache=None
     ):
     # -------------------------------------------------------------------------
     #  If the load flag is on and a star is provided, try to load saved ranges.
@@ -53,6 +59,7 @@ def clean_flux_and_normalize_interactive(
     # Results dictionary and extra values to be returned (we add clean_flux and continuum flux)
     results = {
         'normalized_summed_flux_resampled': None,
+        # 'wavelengths_2D': wavelengths_2D,
         'wavelengths_2D': wavelengths_2D,
         'clean_flux': None,              # summed flux before normalization
         'interpolated_flux': None          # continuum flux used for normalization
@@ -93,6 +100,47 @@ def clean_flux_and_normalize_interactive(
     ax_summed_vertical = plt.subplot2grid((3, 2), (0, 1))
     ax_summed_horizontal = plt.subplot2grid((3, 2), (1, 1))
     ax_norm = plt.subplot2grid((3, 2), (2, 0))
+
+    ### GPT 23/7/25 17:50
+    # -------------------------------------------------------------
+    # --- S N R   w i n d o w   i n i t i a l   p o s i t i o n s
+    # -------------------------------------------------------------
+    centre_idx = len(wavelengths_2D) // 2
+    half_red = 20  # red window = ±20 pixels
+    half_blue = 60  # blue window starts wider
+
+    def idx_to_wave(idx):
+        return wavelengths_2D[np.clip(idx, 0, len(wavelengths_2D) - 1)]
+
+    # Try to reload saved bounds for this band/epoch:
+    # Try to reload from the in‑memory cache
+    cache_key = (star_name, epoch_num, band)
+    saved_bounds = snr_cache.get(cache_key) if snr_cache is not None else None
+
+    if saved_bounds:  # pulled from cache
+        snr_bounds_red = saved_bounds['red']
+        snr_bounds_blue = saved_bounds['blue']
+    else:  # default positions
+        snr_bounds_red = [idx_to_wave(centre_idx - half_red),
+                          idx_to_wave(centre_idx + half_red)]
+        snr_bounds_blue = [idx_to_wave(centre_idx - half_blue),
+                           idx_to_wave(centre_idx + half_blue)]
+
+    # Two red dashed lines  (continuum window)
+    snr_red_left = ax_norm.axvline(snr_bounds_red[0], color='red', ls='--', lw=1.2,
+                                   picker=5)
+    snr_red_right = ax_norm.axvline(snr_bounds_red[1], color='red', ls='--', lw=1.2,
+                                    picker=5)
+
+    # Two blue dashed lines (emission‑line window)
+    snr_blue_left = ax_norm.axvline(snr_bounds_blue[0], color='blue', ls='--', lw=1.2,
+                                    picker=5)
+    snr_blue_right = ax_norm.axvline(snr_bounds_blue[1], color='blue', ls='--', lw=1.2,
+                                     picker=5)
+
+    # Add legend once
+    ax_norm.legend(fontsize=9, loc='upper right')
+
     ax_diff = plt.subplot2grid((3, 2), (2, 1))
 
     ax_norm.set_ylim(-3, 5)
@@ -194,6 +242,48 @@ def clean_flux_and_normalize_interactive(
         movement_threshold = (ax_summed_vertical.get_xlim()[1] - ax_summed_vertical.get_xlim()[0]) * 0.01
         if dist < movement_threshold:
             onclick(press_event)
+
+    # GPT 23/7/25 17:50
+    # ------------------------------------------------------------------
+    # Draggable SNR‑window lines (works only inside ax_norm)
+    # ------------------------------------------------------------------
+    dragging = {'artist': None}
+
+    def on_pick(event):
+        if event.artist in (snr_red_left, snr_red_right,
+                            snr_blue_left, snr_blue_right):
+            dragging['artist'] = event.artist
+
+    def snap_to_grid(x):
+        # optional: snap to nearest wavelength sample
+        idx = np.abs(wavelengths_2D - x).argmin()
+        return wavelengths_2D[idx]
+
+    def on_motion(event):
+        art = dragging['artist']
+        if art is None or event.inaxes != ax_norm or event.xdata is None:
+            return
+        new_x = snap_to_grid(event.xdata)
+
+        # move the picked line and update the corresponding bound list
+        art.set_xdata([new_x, new_x])
+        if art is snr_red_left:
+            snr_bounds_red[0] = new_x
+        elif art is snr_red_right:
+            snr_bounds_red[1] = new_x
+        elif art is snr_blue_left:
+            snr_bounds_blue[0] = new_x
+        else:
+            snr_bounds_blue[1] = new_x
+
+        update_plots(None)  # live refresh
+
+    def on_release(event):
+        dragging['artist'] = None
+
+    fig.canvas.mpl_connect('pick_event', on_pick)
+    fig.canvas.mpl_connect('motion_notify_event', on_motion)
+    fig.canvas.mpl_connect('button_release_event', on_release)
 
     def onclick(event_press):
         if event_press['x'] is None or event_press['y'] is None:
@@ -298,12 +388,44 @@ def clean_flux_and_normalize_interactive(
             else:
                 default_flux = all_fluxes[0] if len(all_fluxes) > 0 else 1.0
                 continuum_flux_interpolated = np.full_like(wavelengths_2D, default_flux)
+            # -------------- NORMALISE on native band grid ---------------------
             normalized_summed_flux = summed_flux / continuum_flux_interpolated
-            normalized_summed_flux_resampled = np.interp(external_wavelengths_band, wavelengths_2D, normalized_summed_flux)
+
+            # GPT 23/7/25 17:50
+            # -------------- 1) Continuum SNR (red window) ---------------------
+            low_r, high_r = sorted(snr_bounds_red)
+            mask_r = (wavelengths_2D >= low_r) & (wavelengths_2D <= high_r)
+            cont_seg = normalized_summed_flux[mask_r]
+            snr_cont = np.nan
+            if cont_seg.size > 1 and np.all(np.isfinite(cont_seg)):
+                snr_cont = np.average(cont_seg) / np.std(cont_seg)
+
+            # -------------- 2) Integrated line SNR (blue window) --------------
+            low_b, high_b = sorted(snr_bounds_blue)
+            mask_b = (wavelengths_2D >= low_b) & (wavelengths_2D <= high_b)
+            line_seg = normalized_summed_flux[mask_b]
+            snr_line = np.nan
+            if line_seg.size > 1 and np.isfinite(line_seg).all() and not np.isnan(snr_cont):
+                snr_line = np.average(line_seg) / np.std(line_seg)
+
+            # -------------- Resample to combined grid (unchanged) -------------
+            normalized_summed_flux_resampled = np.interp(
+                external_wavelengths_band, wavelengths_2D, normalized_summed_flux)
+
+            # -------------- Annotation (clear then draw) ----------------------
+            for t in ax_norm.texts:
+                t.remove()
+            ax_norm.text(
+                0.02, 0.95,
+                f"SNR_cont (red): {snr_cont:.0f}\nSNR_line (blue): {snr_line:.0f}",
+                transform=ax_norm.transAxes, ha='left', va='top',
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.7),
+                fontsize=9
+            )
 
         flux_difference = normalized_summed_flux_resampled - external_normalized_flux_band
         relative_difference = flux_difference / external_normalized_flux_band
-        results['normalized_summed_flux_resampled'] = normalized_summed_flux_resampled
+        results['normalized_summed_flux'] = normalized_summed_flux
         results['clean_flux'] = summed_flux
         results['interpolated_flux'] = continuum_flux_interpolated
 
@@ -340,6 +462,12 @@ def clean_flux_and_normalize_interactive(
     # -------------------------
     def finish_callback(event):
         navigation['finish'] = True
+        # store updated bounds in the cache (in memory only)
+        if snr_cache is not None:
+            snr_cache[cache_key] = {
+                'red': list(sorted(snr_bounds_red)),
+                'blue': list(sorted(snr_bounds_blue))
+            }
         plt.close(fig)
 
     def next_band_callback(event):
@@ -390,7 +518,7 @@ def clean_flux_and_normalize_interactive(
 
     # Return also the clean flux and interpolated continuum so these can be saved.
     return (final_include_spacial, final_bottom, final_top, navigation, 
-            results['normalized_summed_flux_resampled'], results['wavelengths_2D'],
+            results['normalized_summed_flux'], results['wavelengths_2D'],
             results['clean_flux'], results['interpolated_flux'])
 
 
@@ -399,6 +527,11 @@ def main():
     import re
     from ObservationClass import ObservationManager as obsm
     import specs
+
+    # GPT 23/7/25 18:05
+    # ------------ in‑memory cache for red / blue SNR lines -------------
+    snr_bounds_cache = {}  # key = (star_name, epoch_num, band)
+    # val = {'red':[x1,x2], 'blue':[x3,x4]}
 
     parser = argparse.ArgumentParser(description="Interactive flux cleaning and normalization.")
     parser.add_argument('--star_names', nargs='+', default=None, help='List of star names to process')
@@ -483,7 +616,7 @@ def main():
                  bottom_spacial,
                  top_spacial,
                  navigation,
-                 normalized_summed_flux_resampled,
+                 normalized_summed_flux,
                  returned_wavelengths_2D,
                  clean_flux_before_norm,
                  continuum_flux_interpolated) = clean_flux_and_normalize_interactive(
@@ -499,7 +632,8 @@ def main():
                     star=star,
                     bottom_spacial=default_bottom_spacial,
                     top_spacial=default_top_spacial,
-                    include_spacial=default_include_spacial
+                    include_spacial=default_include_spacial,
+                    snr_cache=snr_bounds_cache
                 )
 
                 print(f"Processed star: {star_name}, epoch: {epoch_num}, band: {band}")
@@ -510,7 +644,7 @@ def main():
                 if navigation['finish']:
                     cleaned_normalized_flux = {
                         'wavelengths': returned_wavelengths_2D,
-                        'normalized_flux': normalized_summed_flux_resampled
+                        'normalized_flux': normalized_summed_flux
                     }
                     star.save_property('cleaned_normalized_flux', cleaned_normalized_flux, 
                                        epoch_num, band, overwrite=overwrite_flag, backup=backup_flag)
@@ -520,7 +654,7 @@ def main():
                     spacial_range_dict = {'bottom_spacial': bottom_spacial, 'top_spacial': top_spacial}
                     star.save_property('spacial_range', spacial_range_dict, epoch_num, band,
                                        overwrite=overwrite_flag, backup=backup_flag)
-                    star.save_property('clean_flux', {'clean_flux': clean_flux_before_norm}, epoch_num, band,
+                    star.save_property('clean_flux', {'clean_flux': clean_flux_before_norm,'wavelengths': returned_wavelengths_2D}, epoch_num, band,
                                        overwrite=overwrite_flag, backup=backup_flag)
                     star.save_property('interpolated_flux', {'interpolated_flux': continuum_flux_interpolated}, epoch_num, band,
                                        overwrite=overwrite_flag, backup=backup_flag)
