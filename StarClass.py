@@ -4,9 +4,9 @@ import glob
 from datetime import datetime
 import pandas as pd
 import numpy as np
+from typing import List, Tuple
 from scipy.interpolate import UnivariateSpline
 import matplotlib.pyplot as plt
-import numpy as np
 from matplotlib.widgets import Slider, Button
 import utils as ut
 from IPython.display import display
@@ -40,7 +40,7 @@ from bs4 import BeautifulSoup
 import re
 
 class Star:
-    def __init__(self, star_name, data_dir, backup_dir):
+    def __init__(self, star_name, data_dir, backup_dir, to_print = True):
         """
         Initialize the Star with an identifier and a dictionary of file paths.
         file_paths: A nested dictionary organized by epochs, sub-exposures, and bands.
@@ -59,13 +59,14 @@ class Star:
         self.included_wave = []
         self.included_flux = []
         self.sensitivities = []
+        self.to_print = to_print
 
 
 
 ########################################                 Printing                       ########################################
 
     def print(self,text, to_print = True):
-        if to_print:
+        if to_print and self.to_print:
             print(text)
     
 ########################################                 File Handleing                      ########################################
@@ -849,8 +850,6 @@ class Star:
         elif not isinstance(bands, list):
             bands = [bands]
 
-        
-
         # Generate combinations of epoch_numbers and bands
         combinations = list(product(epoch_nums, bands))
 
@@ -1008,7 +1007,8 @@ class Star:
                                 separation=10,
                                 bin_window=10,
                                 clean=True,
-                                compare=False):
+                                compare=False,
+                                bary_correction=False):
         """
         Plots normalized spectra for the specified epoch(s) and band(s).
 
@@ -1039,6 +1039,7 @@ class Star:
             If True and a cleaned trace is drawn for an epoch+band, also plots
             the original just above it, with its own "(orig)" legend.
         """
+        c_kms = 299792.458
         # ─── Prepare epochs ─────────────────────────────────────────
         if epoch_nums is None:
             epoch_nums = self.get_all_epoch_numbers()
@@ -1073,6 +1074,11 @@ class Star:
                 if d_clean is not None:
                     wl = np.array(d_clean['wavelengths'])
                     fl = np.array(d_clean['normalized_flux'])
+                    if bary_correction:
+                        fits_file = self.load_observation(ep, 'VIS')
+                        bary = fits_file.header['ESO QC VRAD BARYCOR']
+                        wl = wl * (1 - bary / c_kms)  # correct to barycentric frame
+
                     wl_b, fl_b = (wl, fl) if bin_window <= 1 else bin_data(wl, fl, bin_window)
                     data_list.append({'epoch': ep, 'band': band,
                                       'wl': wl_b, 'fl': fl_b, 'type': 'clean'})
@@ -1094,6 +1100,10 @@ class Star:
                     continue
                 wl = np.array(d_orig['wavelengths'])
                 fl = np.array(d_orig['normalized_flux'])
+                if bary_correction:
+                    fits_file = self.load_observation(ep, 'VIS')
+                    bary = fits_file.header['ESO QC VRAD BARYCOR']
+                    wl = wl * (1 + bary / c_kms)  # correct to barycentric frame
                 wl_b, fl_b = (wl, fl) if bin_window <= 1 else bin_data(wl, fl, bin_window)
                 data_list.append({'epoch': ep, 'band': band,
                                   'wl': wl_b, 'fl': fl_b, 'type': 'orig'})
@@ -1103,7 +1113,7 @@ class Star:
             return
 
         # ─── Figure + sliders setup ────────────────────────────────
-        fig, ax = plt.subplots(figsize=(12, 6))
+        fig, ax = plt.subplots(figsize=(8, 6))
         if separate or compare:
             plt.subplots_adjust(bottom=0.25)
 
@@ -1125,9 +1135,9 @@ class Star:
                           entry['wl'].min(), entry['wl'].max(),
                           linestyles='--', colors='gray', linewidth=0.8)
 
-            ax.set_xlabel('Wavelength')
-            ax.set_ylabel('Offset Normalized Flux')
-            ax.set_title(f"{self.star_name} — Bands: {', '.join(bands)}")
+            ax.set_xlabel('Wavelength [nm]',fontsize=20)
+            ax.set_ylabel('Normalized Flux',fontsize=20)
+            ax.set_title(f"{self.star_name} — Bands: {', '.join(bands)}",fontsize=20)
             ax.legend(fontsize='small', ncol=2)
             ax.grid(True)
             fig.canvas.draw_idle()
@@ -1160,7 +1170,277 @@ class Star:
             plt.savefig(os.path.join(outdir, fname))
             print(f"Saved figure to: {outdir}/{fname}")
 
+        plt.rcParams.update({
+            'font.size':12,  # general font size
+            'axes.titlesize': 12,  # title font size
+            'axes.labelsize': 12,  # x and y labels
+            'xtick.labelsize': 12,  # x-axis tick labels
+            'ytick.labelsize': 12,  # y-axis tick labels
+            'legend.fontsize': 12,  # legend font size
+            'figure.titlesize': 12  # figure title font size
+        })
+
         plt.show()
+
+    ########################################                                       ########################################
+
+    import os
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import re
+    from datetime import datetime
+
+    def plot_extreme_rv_spectra(self,
+                                emission_line,
+                                emission_lines={},
+                                band='COMBINED',
+                                save=False,
+                                linewidth=1.5,
+                                scatter=False,
+                                ts=None,
+                                to_plot=False,
+                                models=None):
+        """
+        Identify the epochs with the lowest and highest radial velocities in the specified band
+        and plot their combined spectra together, optionally over-plotting model templates.
+
+        Identify the epochs with the lowest and highest radial velocities in the specified band
+        (using all available epochs) and plot their combined spectra together.
+
+        Parameters:
+            band (str): Which band to load—defaults to 'COMBINE'.
+            save (bool): If True, save the figure (to data_dir/star_name/output/Figures).
+            linewidth (float): Line width for the lines/scatter points.
+            scatter (bool): If True, uses scatter instead of line plot.
+            model (list of str): file paths to your .dat template spectra (wavelength [Å], flux).
+
+        All observed spectra are converted from nm to Å for the plot.
+        """
+
+        # ─── Get all epochs ─────────────────────────────────────────
+        epoch_nums = self.get_all_epoch_numbers()
+
+        # ─── Gather RVs ─────────────────────────────────────────────
+        rvs = {}
+        for ep in epoch_nums:
+            try:
+                RVs = self.load_property('RVs', ep, band)
+                rv = RVs[emission_line].item()['full_RV']
+            except Exception:
+                rv = None
+            if rv is not None:
+                rvs[ep] = rv
+
+        if not rvs:
+            print(f"No radial velocities found for band '{band}'.")
+            return
+
+        # ─── Find extremes ───────────────────────────────────────────
+        min_ep = min(rvs, key=rvs.get)
+        max_ep = max(rvs, key=rvs.get)
+        min_rv, max_rv = rvs[min_ep], rvs[max_ep]
+
+        # ─── Load spectra ────────────────────────────────────────────
+        def _load(ep):
+            norm_flux = self.load_property('cleaned_normalized_flux', ep, band)
+            if norm_flux is None:
+                norm_flux = self.load_property('normalized_flux', ep, band)
+            wave_nm = norm_flux['wavelengths']  # in nm
+            flux = norm_flux['normalized_flux']
+            return wave_nm * 10.0, flux  # convert to Å
+
+        wl_min, fl_min = _load(min_ep)
+        wl_max, fl_max = _load(max_ep)
+
+        # ─── Plot ───────────────────────────────────────────────────
+        plt.figure(figsize=(10, 6))
+
+        if scatter:
+            plt.scatter(wl_min, fl_min,
+                        label=f'Epoch {min_ep} (RV={min_rv:.1f} km/s)',
+                        linewidth=linewidth)
+            plt.scatter(wl_max, fl_max,
+                        label=f'Epoch {max_ep} (RV={max_rv:.1f} km/s)',
+                        linewidth=linewidth)
+        else:
+            plt.plot(wl_min, fl_min,
+                     label=f'Epoch {min_ep} (RV={min_rv:.1f} km/s)',
+                     linewidth=linewidth, color='blue')
+            plt.plot(wl_max, fl_max,
+                     label=f'Epoch {max_ep} (RV={max_rv:.1f} km/s)',
+                     linewidth=linewidth, color='red')
+
+        # ─── Overplot model models if requested ──────────────────
+        if models:
+            for tpl in models:
+                try:
+                    tpl = f'Data/Models_for_Guy/' + tpl
+                    model_wave, model_flux = np.loadtxt(tpl, unpack=True)
+                    plt.plot(model_wave, model_flux,
+                             label=os.path.basename(tpl),
+                             linestyle='--',
+                             linewidth=1.0)
+                except Exception as e:
+                    print(f"Warning: could not load template '{tpl}': {e}")
+
+        plt.xlabel('Wavelength [Å]')
+        plt.ylabel('Normalized Flux')
+        plt.title(f'{self.star_name}: Extreme RV Spectra ({emission_line})')
+        plt.legend(fontsize='small', loc='best')
+        plt.grid(True)
+        plt.tight_layout()
+
+        # ─── Zoom on line if requested ──────────────────────────────
+        if save and emission_lines:
+            xmin, xmax = emission_lines[emission_line]
+            # already in Å now
+            width = xmax - xmin
+            x_low = xmin - 0.1 * width
+            x_high = xmax + 0.1 * width
+            plt.xlim(x_low, x_high)
+
+            # set y‐limits from data in window
+            m1 = (wl_min >= x_low) & (wl_min <= x_high)
+            m2 = (wl_max >= x_low) & (wl_max <= x_high)
+            flux_window = np.concatenate([fl_min[m1], fl_max[m2]])
+            y_min, y_max = flux_window.min(), flux_window.max()
+            pad = 0.05 * (y_max - y_min)
+            plt.ylim(y_min - pad, y_max + pad)
+
+        # ─── Save or Show ───────────────────────────────────────────
+        if save:
+            if ts is None:
+                ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+            outdir = os.path.join('output', re.sub(r"[^A-Za-z0-9_-]", "_", self.star_name),
+                                  'CCF', ts, emission_line)
+            os.makedirs(outdir, exist_ok=True)
+            fname = f"{self.star_name}_{emission_line}_extremeRV.png"
+            path = os.path.join(outdir, fname)
+            plt.savefig(path)
+            print(f"Saved {emission_line} plot to {path}")
+
+        if to_plot:
+            plt.show()
+        else:
+            plt.close()
+
+    ########################################                                       ########################################
+
+    def plot_extreme_rv_spectra_old(self,
+                                emission_line,
+                                emission_lines = {},
+                                band='COMBINED',
+                                save=False,
+                                linewidth=1.5,
+                                scatter=False,
+                                ts = None,
+                                to_plot = False):
+        """
+        Identify the epochs with the lowest and highest radial velocities in the specified band
+        (using all available epochs) and plot their combined spectra together.
+
+        Parameters:
+            band (str): Which band to load—defaults to 'COMBINE'.
+            save (bool): If True, save the figure (to data_dir/star_name/output/Figures).
+            linewidth (float): Line width for the lines/scatter points.
+            scatter (bool): If True, uses scatter instead of line plot.
+        """
+        # ─── Get all epochs ─────────────────────────────────────────
+        epoch_nums = self.get_all_epoch_numbers()
+
+        # ─── Gather RVs ─────────────────────────────────────────────
+        rvs = {}
+        for ep in epoch_nums:
+            # try loading as a stored property...
+            rv = None
+            try:
+                RVs = self.load_property('RVs', ep, band)
+                rv = RVs[emission_line].item()['full_RV']
+            except Exception as e:
+                print(e)
+            if rv is not None:
+                rvs[ep] = rv
+
+        if not rvs:
+            print(f"No radial velocities found for band '{band}'.")
+            return
+
+        # ─── Find extremes ───────────────────────────────────────────
+        min_ep = min(rvs, key=rvs.get)
+        max_ep = max(rvs, key=rvs.get)
+        min_rv, max_rv = rvs[min_ep], rvs[max_ep]
+
+        # ─── Load spectra ────────────────────────────────────────────
+        def _load(ep):
+            norm_flux = self.load_property('cleaned_normalized_flux', ep, band)
+            # print(norm_flux)
+            if norm_flux is None:
+                norm_flux = self.load_property('normalized_flux', ep, band)
+            wave = norm_flux['wavelengths']
+            flux = norm_flux['normalized_flux']
+            print(wave, flux)
+            return wave, flux
+
+        wl_min, fl_min = _load(min_ep)
+        wl_max, fl_max = _load(max_ep)
+
+        # ─── Plot ───────────────────────────────────────────────────
+        plt.figure(figsize=(10, 6))
+        if scatter:
+            plt.scatter(wl_min, fl_min,
+                        label=f'Epoch {min_ep} (RV={min_rv:.2f})',
+                        linewidth=linewidth)
+            plt.scatter(wl_max, fl_max,
+                        label=f'Epoch {max_ep} (RV={max_rv:.2f})',
+                        linewidth=linewidth)
+        else:
+            plt.plot(wl_min, fl_min,
+                     label=f'Epoch {min_ep} (RV={min_rv:.2f})',
+                     linewidth=linewidth, color='blue')
+            plt.plot(wl_max, fl_max,
+                     label=f'Epoch {max_ep} (RV={max_rv:.2f})',
+                     linewidth=linewidth, color='red')
+
+        plt.xlabel('Wavelength [nm]')
+        plt.ylabel(r'Normalized Flux')
+        plt.title(f'{self.star_name}: Extreme RV Spectra ({emission_lines})')
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+
+        if save:
+            print('wtf')
+            if ts == None:
+                ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+            if emission_lines:
+                xmin,xmax = emission_lines[emission_line]
+                width = xmax - xmin
+                x_low = xmin - 0.1 * width
+                x_high = xmax + 0.1 * width
+
+                # apply zoom
+                plt.xlim(x_low, x_high)
+                # compute y‐limits from the two spectra in that x‐range
+                m1 = (wl_min >= x_low) & (wl_min <= x_high)
+                m2 = (wl_max >= x_low) & (wl_max <= x_high)
+                flux_window = np.concatenate([fl_min[m1], fl_max[m2]])
+                y_min, y_max = flux_window.min(), flux_window.max()
+                pad = 0.05 * (y_max - y_min)  # 5% vertical padding
+
+                # set y‐limits
+                plt.ylim(y_min - pad, y_max + pad)
+
+            outdir = os.path.join('../output', re.sub(r"[^A-Za-z0-9_-]", "_", self.star_name), 'CCF', ts, emission_line)
+            os.makedirs(outdir, exist_ok=True)
+            fname = f"{self.star_name}_{emission_line}_extremeRV.png"
+            path = os.path.join(outdir, fname)
+            plt.savefig(path)
+            print(f"Saved {emission_line} plot to {path}")
+
+        if to_plot:
+            plt.show()
+        # plt.clf()
 
     ########################################                                       ########################################
 
@@ -1775,8 +2055,7 @@ class Star:
                     [uvb_wave, vis_wave, nir_wave],
                     [uvb_flux, vis_flux, nir_flux],
                     [uvb_snr, vis_snr, nir_snr],
-                    [uvb_red_flux,vis_red_flux,nir_red_flux],
-                    epoch_num
+                    [uvb_red_flux,vis_red_flux,nir_red_flux]
                 )
 
                 combined_data = {
@@ -1807,7 +2086,7 @@ class Star:
 
 ########################################                                   ########################################
 
-    def _combine_spectra(self, wave_list, flux_list, snr_list, flux_reduced_list,epoch_num):
+    def _combine_spectra(self, wave_list, flux_list, snr_list, flux_reduced_list,align = True):
         """
         Combine multiple spectra into a single spectrum by handling overlaps with different sampling,
         aligning mean fluxes before combination, and combining fluxes using the weighted SNR method.
@@ -1875,13 +2154,19 @@ class Star:
 
                 if mean_flux_combined >= mean_flux_current:
                     print(f'entered case where mean_flux_combined >= mean_flux_current')
-                    alignment_factor = mean_flux_combined / mean_flux_current
+                    if align:
+                        alignment_factor = mean_flux_combined / mean_flux_current
+                    else:
+                        alignment_factor = 1.0
                     flux_current *= alignment_factor
                     snr_current *= alignment_factor
                     flux_reduced_current *= alignment_factor
                 else:
                     print(f'entered case where mean_flux_combined < mean_flux_current')
-                    alignment_factor = mean_flux_current / mean_flux_combined
+                    if align:
+                        alignment_factor = mean_flux_current / mean_flux_combined
+                    else:
+                        alignment_factor = 1.0
                     combined_flux *= alignment_factor
                     combined_snr *= alignment_factor
                     combined_flux_reduced *= alignment_factor
@@ -2064,10 +2349,248 @@ class Star:
 
     ########################################                                   ########################################
 
+    def _local_snr(self,
+                   flux: np.ndarray,
+                   idx:  np.ndarray,
+                   half_win: int = 20,
+                   ) -> np.ndarray:
+        """
+        Per-pixel SNR = 1 / std(window)  **only for the indices in `idx`.**
+        Pixels not in `idx` should never be passed in.
+        """
+        snr   = np.empty(idx.size, dtype=float)
+        n     = len(flux)
+        h     = half_win
+        for k, i in enumerate(idx):
+            lo   = max(0, i - h)
+            hi   = min(n, i + h + 1)
+            sigma = np.std(flux[lo:hi])
+            snr[k] = 1.0 / sigma if sigma > 0 else np.nan
+        return snr
+
+    # ------------------------------------------------------------------
+    # public method
+    # ------------------------------------------------------------------
+
+    def combine_cleaned_bands(
+            self,
+            wl_list:   List[np.ndarray],
+            flux_list: List[np.ndarray],
+            trash,
+            edge_frac = 0.05,
+            window_size = 40
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Parameters
+        ----------
+        wl_list, flux_list : list of 1-D np.ndarrays, each strictly increasing.
+
+        Returns
+        -------
+        wave, flux, snr : 1-D np.ndarrays
+                          (snr = NaN everywhere except stitched overlaps)
+        """
+        if len(wl_list) != len(flux_list):
+            raise ValueError("wl_list and flux_list must be the same length")
+
+        # ---------- seed with first band ---------------------------------
+        wave = wl_list[0].copy()
+        flux = flux_list[0].copy()
+        half_win = int(window_size / 2)
+        snr  = np.full_like(flux, np.nan)           # no overlap yet ⇒ NaN
+
+        order = np.argsort(wave)
+        wave, flux, snr = wave[order], flux[order], snr[order]
+
+        # ---------- iterate over remaining bands -------------------------
+        for wl, fl in zip(wl_list[1:], flux_list[1:]):
+            wl  = wl.copy()
+            fl  = fl.copy()
+            sn  = np.full_like(fl, np.nan)
+
+            # overlap limits
+            left, right = max(wave[0], wl[0]), min(wave[-1], wl[-1])
+
+            # --------------- no overlap → simple append ------------------
+            if left >= right:
+                wave = np.concatenate((wave, wl))
+                flux = np.concatenate((flux, fl))
+                snr  = np.concatenate((snr,  sn))
+                order = np.argsort(wave)
+                wave, flux, snr = wave[order], flux[order], snr[order]
+                continue
+
+            # indices inside overlap
+            idx_c = np.where((wave >= left) & (wave <= right))[0]
+            idx_n = np.where((wl   >= left) & (wl   <= right))[0]
+
+            # ---------- continuum alignment (right-edge slice) ----------
+            tail_c = idx_c[-max(1, int(len(idx_c) * edge_frac)):]
+            tail_n = idx_n[-max(1, int(len(idx_n) * edge_frac)):]
+            scale  = np.median(flux[tail_c]) / np.median(fl[tail_n])
+            fl *= scale
+
+            # ---------- SNR **only** in the overlap ---------------------
+            snr_c = self._local_snr(flux, idx_c,half_win)
+            snr_n = self._local_snr(fl,   idx_n,half_win)
+            plt.plot(wave[idx_c],snr_c,label = 'snr_c')
+            plt.plot(wl[idx_n],snr_n,label = 'snr_n')
+            plt.legend()
+            plt.show()
+
+            # ---------- choose finer grid in the overlap ----------------
+            dlam_c = np.median(np.diff(wave[idx_c]))
+            dlam_n = np.median(np.diff(wl  [idx_n]))
+            new_is_finer = dlam_n < dlam_c - 1e-12
+
+            if new_is_finer:
+                fine_wl  = wl[idx_n]
+                fine_f   = fl[idx_n]
+                fine_sn  = snr_n
+                coarse_f = np.interp(fine_wl, wave[idx_c], flux[idx_c])
+                coarse_sn= np.interp(fine_wl, wave[idx_c], snr[idx_c])
+                w_fine, w_coarse = fine_sn**2, coarse_sn**2
+                blended_flux = (fine_f*w_fine + coarse_f*w_coarse) / (w_fine + w_coarse)
+                blended_snr  = np.sqrt(w_fine + w_coarse)
+                fl[idx_n] = blended_flux
+                sn[idx_n] = blended_snr
+                # append non-overlap part of new band
+                keep  = wl > right
+                wave  = np.concatenate((wave, wl[keep]))
+                flux  = np.concatenate((flux, fl[keep]))
+                snr   = np.concatenate((snr,  sn[keep]))
+            else:
+                fine_wl  = wave[idx_c]
+                fine_f   = flux[idx_c]
+                fine_sn  = snr_c
+                coarse_f = np.interp(fine_wl, wl[idx_n], fl[idx_n])
+                coarse_sn= np.interp(fine_wl, wl[idx_n], sn[idx_n])
+                w_fine, w_coarse = fine_sn**2, coarse_sn**2
+                blended_flux = (fine_f*w_fine + coarse_f*w_coarse) / (w_fine + w_coarse)
+                blended_snr  = np.sqrt(w_fine + w_coarse)
+                flux[idx_c]  = blended_flux
+                snr[idx_c]   = blended_snr
+                # prepend part of old combo < left
+                keep  = wave < left
+                wl    = np.concatenate((wave[keep], wl))
+                fl    = np.concatenate((flux[keep], fl))
+                sn    = np.concatenate((snr [keep], sn))
+                wave, flux, snr = wl, fl, sn
+
+            # ---------- keep global arrays sorted -----------------------
+            order = np.argsort(wave)
+            wave, flux, snr = wave[order], flux[order], snr[order]
+
+        return wave, flux, snr
+
+    def combine_cleaned_bands_old(
+            self,wl_list, flux_list, snr_list=None,
+            edge_frac=0.05, snr_window=41
+    ):
+        """
+        Merge already *normalised* band spectra à la original _combine_spectra.
+
+        Parameters
+        ----------
+        wl_list   : list of 1-D np.ndarray (wavelengths, Å – increasing)
+        flux_list : list of 1-D np.ndarray (normalised flux, ~1)
+        snr_list  : list of 1-D np.ndarray  (optional; same length as wl_list)
+                    – If None, SNR is estimated as 1/rolling_std.
+        edge_frac : float  (0–1)  fraction of the RIGHT-edge of the overlap
+                    used for continuum matching.
+        snr_window: int    window size for noise estimate if snr_list is None.
+
+        Returns
+        -------
+        wave, flux, snr   : 1-D np.ndarray
+        """
+
+        # --- start with the first band ---------------------------------
+        wave = wl_list[0].copy()
+        flux = flux_list[0].copy()
+        snr = snr_list[0].copy()
+
+        # keep everything sorted along the way
+        sort = np.argsort(wave)
+        wave, flux, snr = wave[sort], flux[sort], snr[sort]
+
+        # ---------------------------------------------------------------
+        for wl, fl, sn in zip(wl_list[1:], flux_list[1:], snr_list[1:]):
+
+            wl = wl.copy();
+            fl = fl.copy();
+            sn = sn.copy()
+            left, right = max(wave[0], wl[0]), min(wave[-1], wl[-1])
+
+            # ---------- NO OVERLAP → simple append ----------------------
+            if left >= right:
+                wave = np.concatenate((wave, wl))
+                flux = np.concatenate((flux, fl))
+                snr = np.concatenate((snr, sn))
+                sort = np.argsort(wave)
+                wave, flux, snr = wave[sort], flux[sort], snr[sort]
+                continue
+
+            # ---------- locate indices of overlap ----------------------
+            idx_c = np.where((wave >= left) & (wave <= right))[0]
+            idx_n = np.where((wl >= left) & (wl <= right))[0]
+
+            # ---------- continuum alignment ----------------------------
+            tail_c = idx_c[-max(1, int(len(idx_c) * edge_frac)):]
+            tail_n = idx_n[-max(1, int(len(idx_n) * edge_frac)):]
+
+
+            # ---------- pick finer grid in overlap ---------------------
+            dlam_c = np.median(np.diff(wave[idx_c]))
+            dlam_n = np.median(np.diff(wl[idx_n]))
+            new_is_finer = dlam_n < dlam_c - 1e-12  # tiny epsilon
+
+            if new_is_finer:
+                fine_wl, fine_f, fine_sn = wl[idx_n], fl[idx_n], sn[idx_n]
+                coarse_f = np.interp(fine_wl, wave[idx_c], flux[idx_c])
+                coarse_sn = np.interp(fine_wl, wave[idx_c], snr[idx_c])
+            else:
+                fine_wl, fine_f, fine_sn = wave[idx_c], flux[idx_c], snr[idx_c]
+                coarse_f = np.interp(fine_wl, wl[idx_n], fl[idx_n])
+                coarse_sn = np.interp(fine_wl, wl[idx_n], sn[idx_n])
+
+            # ---------- SNR² weighting blend ---------------------------
+            w_fine, w_coarse = fine_sn ** 2, coarse_sn ** 2
+            total_w = w_fine + w_coarse
+            blended_flux = (fine_f * w_fine + coarse_f * w_coarse) / total_w
+            blended_snr = np.sqrt(total_w)
+
+            # ---------- write blend back & append non-overlap ----------
+            if new_is_finer:
+                fl[idx_n] = blended_flux
+                sn[idx_n] = blended_snr
+
+                # append λ > right
+                keep = wl > right
+                wave = np.concatenate((wave, wl[keep]))
+                flux = np.concatenate((flux, fl[keep]))
+                snr = np.concatenate((snr, sn[keep]))
+            else:
+                flux[idx_c] = blended_flux
+                snr[idx_c] = blended_snr
+
+                # prepend λ < left
+                keep = wave < left
+                wl = np.concatenate((wave[keep], wl))
+                fl = np.concatenate((flux[keep], fl))
+                sn = np.concatenate((snr[keep], sn))
+
+                wave, flux, snr = wl, fl, sn
+
+            sort = np.argsort(wave)
+            wave, flux, snr = wave[sort], flux[sort], snr[sort]
+
+        # ----------------------------------------------------------------
+        return wave, flux, snr
+
     def stitch_cleaned_normalized_flux(self,
                                        epoch_nums=None,
                                        bands=('UVB', 'VIS', 'NIR'),
-                                       window_size_snr=40,
                                        overwrite=False,
                                        backup=True):
         """
@@ -2089,8 +2612,7 @@ class Star:
         backup : bool
             If True, create a backup before overwriting.
         """
-        import numpy as np
-        import utils as ut
+
 
         # 1) determine epochs
         if epoch_nums is None:
@@ -2098,11 +2620,9 @@ class Star:
         elif not isinstance(epoch_nums, (list, tuple, np.ndarray)):
             epoch_nums = [epoch_nums]
 
-        half = window_size_snr // 2
-
         for epoch in epoch_nums:
             # 2) load each band’s cleaned_normalized_flux
-            wl_list, fl_list = [], []
+            wl_list, fl_list,snr_list = [], [], []
             for b in bands:
                 data = self.load_property('cleaned_normalized_flux', epoch, b)
                 if (data is None
@@ -2112,61 +2632,24 @@ class Star:
                     break
                 wl_list.append(np.array(data['wavelengths']))
                 fl_list.append(np.array(data['normalized_flux']))
+                SNR = self.load_observation(epoch_num=epoch, band=b).data['SNR'][0]
+                snr_list.append(np.array(SNR))
             else:
-                # only if no break (all bands loaded)
-                # 3) build common wavelength grid
-                common_wl = np.unique(np.concatenate(wl_list))
+                # 4)
+                flux_reduced_list = [np.ones_like(fl) for fl in fl_list]
+                comb_wl, comb_flux, comb_snr, _, align_info = self._combine_spectra(
+                    wl_list, fl_list, snr_list, flux_reduced_list, align = False)
 
-                # 4) interpolate & compute SNR‐based weights
-                interp_flux = []
-                weights = []
-                for wl, fl in zip(wl_list, fl_list):
-                    # interp onto common grid
-                    f = np.interp(common_wl, wl, fl, left=np.nan, right=np.nan)
 
-                    # local noise estimate
-                    n = len(common_wl)
-                    noise = np.empty_like(f)
-                    for i in range(n):
-                        lo = max(0, i - half)
-                        hi = min(n, i + half)
-                        win = f[lo:hi]
-                        win = win[np.isfinite(win)]
-                        noise[i] = ut.robust_std(win, 3) if len(win) > 1 else np.nan
-
-                    # replace bad noise values
-                    med = np.nanmedian(noise[np.isfinite(noise) & (noise > 0)])
-                    noise[~np.isfinite(noise)] = med
-                    noise[noise <= 0] = med
-
-                    wt = 1.0 / (noise ** 2)
-
-                    # zero out outside band range
-                    mask = (common_wl < wl.min()) | (common_wl > wl.max())
-                    wt[mask] = 0.0
-                    f[mask] = np.nan
-
-                    interp_flux.append(f)
-                    weights.append(wt)
-
-                # stack & compute weighted average
-                F = np.vstack(interp_flux)  # shape (n_bands, N)
-                W = np.vstack(weights)
-                wsum = np.nansum(W, axis=0)
-                stitched = np.nansum(F * W, axis=0) / np.where(wsum > 0, wsum, np.nan)
-
-                # 5) save under COMBINED
-                out = {
-                    'wavelengths': common_wl,
-                    'normalized_flux': stitched
-                }
+                # 5) save to COMBINED
+                out = {'wavelengths': comb_wl,
+                       'normalized_flux': comb_flux}
                 self.save_property('cleaned_normalized_flux',
-                                   out,
-                                   epoch,
-                                   'COMBINED',
-                                   overwrite=overwrite,
-                                   backup=backup)
-                print(f"[Epoch {epoch}] saved stitched cleaned_normalized_flux under COMBINED.")
+                                   out, epoch, 'COMBINED',
+                                   overwrite=overwrite, backup=backup)
+                print(f"[Epoch {epoch}] saved stitched cleaned_normalized_flux "
+                      f"({len(comb_wl)} pixels) under COMBINED.")
+
             # end for-bands else
         # end for-epoch loop
 

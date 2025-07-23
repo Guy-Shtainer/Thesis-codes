@@ -48,7 +48,7 @@ class ObservationManager:
         self.star_instances = {}
 
 
-    def create_star_instance(self, star_name, data_dir = None, backup_dir = None):
+    def create_star_instance(self, star_name,to_print, data_dir = None, backup_dir = None):
         """
         Creates and returns a Star instance if the star is found in the list of star names.
 
@@ -68,11 +68,11 @@ class ObservationManager:
 
         # If the star is in the NRES list, return an NRES object
         if star_name in self.NRES_stars:
-            return NRES(star_name=star_name, data_dir=data_dir, backup_dir=backup_dir)
+            return NRES(star_name=star_name, data_dir=data_dir, backup_dir=backup_dir, to_print = to_print)
         else:
-            return Star(star_name=star_name, data_dir=data_dir, backup_dir=backup_dir)
+            return Star(star_name=star_name, data_dir=data_dir, backup_dir=backup_dir, to_print = to_print)
 
-    def load_star_instance(self, star_name, data_dir = None, backup_dir = None):
+    def load_star_instance(self, star_name, data_dir = None, backup_dir = None, to_print = True):
         """
         Loads and returns a Star instance for the given star name.
     
@@ -104,7 +104,7 @@ class ObservationManager:
             return self.star_instances[star_name]
 
         # 4) Otherwise, create it using create_star_instance
-        star_instance = self.create_star_instance(star_name, data_dir=data_dir, backup_dir=backup_dir)
+        star_instance = self.create_star_instance(star_name, data_dir=data_dir, backup_dir=backup_dir, to_print = to_print)
         self.star_instances[star_name] = star_instance
         return star_instance
     
@@ -922,7 +922,7 @@ class ObservationManager:
 
     
 
-    def process_star(self, args):
+    def process_star_old(self, args):
         """
         Function to process a star in parallel.
     
@@ -956,8 +956,122 @@ class ObservationManager:
         except Exception as e:
             print(f"Error executing method '{method_name}' on star '{star_name}': {e}")
             return (star_name, None)
+
+    def process_star(self, args):
+        """
+        Function to process a star in parallel.
     
-    def execute_method_on_stars(self, method_name, stars=None, epoch_numbers=None, bands=None,
+        Parameters:
+            args (tuple): A tuple containing the arguments needed to process the star.
+    
+        Returns:
+            tuple: A tuple containing the star name and the result of the method execution.
+        """
+        (star_name, method_name, params, epoch_numbers, bands, overwrite, backup, parallel) = args
+    
+        try:
+            # Load the correct star instance dynamically
+            star = self.load_star_instance(star_name)
+    
+            # Ensure the star has the specified method
+            if hasattr(star, method_name):
+                star_method = getattr(star, method_name)
+                result = star.execute_method(
+                    method=star_method,
+                    params=params,
+                    epoch_numbers=epoch_numbers,
+                    bands=bands,
+                    overwrite=overwrite,
+                    backup=backup,
+                    parallel=parallel  # Allow internal parallelism
+                )
+                print(f"Executed method '{method_name}' on star '{star_name}'.")
+                return (star_name, result)
+            else:
+                print(f"Star '{star_name}' does not have method '{method_name}'. Skipping.")
+                return (star_name, None)
+    
+        except Exception as e:
+            print(f"Error executing method '{method_name}' on star '{star_name}': {e}")
+            return (star_name, None)
+
+
+    def execute_method_on_stars(self, method_name, filename, stars=None, epoch_numbers=None, bands=None,
+                                params={}, overwrite=False, backup=True, parallel=False, 
+                                max_workers=None):
+        """
+        Executes a specified method on multiple stars using star.execute_method().
+    
+        Parameters:
+            method_name (str): The name of the method to execute.
+            stars (list or str, optional): List of star names or a single star name to process.
+                                           If None, all stars are processed.
+            epoch_numbers (list, optional): List of epoch numbers to process.
+            bands (list, optional): List of bands to process.
+            params (dict): Parameters to pass to the method.
+            overwrite (bool): Whether to overwrite existing outputs.
+            backup (bool): Whether to backup existing outputs before overwriting.
+            parallel (bool): Whether to execute methods in parallel.
+            max_workers (int, optional): Number of workers for parallel execution.
+            filename (str, optional): Filename to use for saving results.
+    
+        Returns:
+            dict: A dictionary mapping star names to the results of the method execution.
+        """
+        if stars is None:
+            stars_to_process = self.star_names
+        elif isinstance(stars, str):
+            stars_to_process = [stars]
+        else:
+            stars_to_process = stars
+    
+        results = {}
+    
+        if parallel:
+            if max_workers is None:
+                max_workers = multiprocess.cpu_count() - 1
+    
+            args_list = []
+            for star_name in stars_to_process:
+                args = (star_name, method_name, params, epoch_numbers, bands, 
+                        overwrite, backup, parallel, filename)
+                args_list.append(args)
+    
+            with multiprocess.Pool(processes=max_workers) as pool:
+                results_list = pool.map(self.process_star, args_list)
+    
+            for star_name, result in results_list:
+                results[star_name] = result
+        else:
+            for star_name in stars_to_process:
+                star = self.load_star_instance(star_name)
+                if hasattr(star, method_name):
+                    star_method = getattr(star, method_name)
+                    try:
+                        result = star.execute_method(
+                            method=star_method,
+                            params=params,
+                            epoch_numbers=epoch_numbers,
+                            bands=bands,
+                            overwrite=overwrite,
+                            backup=backup,
+                            parallel=parallel,
+                            filename=filename  # Pass the filename
+                        )
+                        results[star_name] = result
+                        print(f"Executed method '{method_name}' on star '{star_name}'.")
+                    except Exception as e:
+                        print(f"Error executing method '{method_name}' on star '{star_name}': {e}")
+                        results[star_name] = None
+                else:
+                    print(f"Star '{star_name}' does not have method '{method_name}'. Skipping.")
+                    results[star_name] = None
+    
+        return results
+
+
+    
+    def execute_method_on_stars_old(self, method_name, stars=None, epoch_numbers=None, bands=None,
                                 params={}, overwrite=False, backup=True, parallel=False, max_workers = None):
         """
         Executes a specified method on multiple stars using star.execute_method().

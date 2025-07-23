@@ -34,7 +34,7 @@ from bs4 import BeautifulSoup
 import re
 
 class NRES:
-    def __init__(self, star_name, data_dir, backup_dir):
+    def __init__(self, star_name, data_dir, backup_dir,to_print = True):
         """
         Initialize the NRES object.
         
@@ -64,11 +64,12 @@ class NRES:
         self.included_wave = []
         self.included_flux = []
         self.sensitivities = []
-    
-    ########################################  Printing  ########################################
+        self.to_print = to_print
+
+    ########################################                 Printing                       ########################################
 
     def print(self, text, to_print=True):
-        if to_print:
+        if to_print and self.to_print:
             print(text)
 
     ########################################  Directory Helpers  ########################################
@@ -868,9 +869,9 @@ class NRES:
             return overlap_start, overlap_end
             
         # Start from the first spectrum in the list
-        combined_wave = np.flip(wave_list[0].copy())
-        combined_flux = np.flip(flux_list[0].copy())
-        combined_snr  = np.flip(snr_list[0].copy())
+        combined_wave = wave_list[0].copy()
+        combined_flux = flux_list[0].copy()
+        combined_snr  = snr_list[0].copy()
 
         # Remove any zeros in wave, flux, or SNR
         # mask = (combined_wave != 0) & (combined_flux != 0) & (combined_snr != 0)
@@ -889,9 +890,9 @@ class NRES:
         
         # Loop over all other spectra in the list
         for i in range(1, len(wave_list)):
-            wv_current = np.flip(wave_list[i])
-            fl_current = np.flip(flux_list[i])
-            sn_current = np.flip(snr_list[i])
+            wv_current = wave_list[i]
+            fl_current = flux_list[i]
+            sn_current = snr_list[i]
             # print(wv_current[500:530])
 
             # Remove zeros
@@ -1010,11 +1011,13 @@ class NRES:
     
     def plot_stitched_spectra(self, epoch_num, spectra_num,
                               subtract_sky=True,
-                              my_SNR = False):
+                              my_SNR=False,
+                              plot_SNR=False,
+                              window_size = 20):
         """
         Load multiple (sky, object) pairs, optionally subtract sky and do blaze 
-        correction, then stitch them with SNR weighting. Plots one final curve.
-    
+        correction, then stitch them with SNR weighting. Plots one final flux curve.
+        
         Parameters
         ----------
         epoch_num : int or str
@@ -1024,13 +1027,19 @@ class NRES:
         subtract_sky : bool
             If True, subtract sky from object in each pair.
             (We assume wave_arrays, flux_arrays come in pairs of (sky, obj).)
-        blaze_correction : bool
-            If True, do separate blaze corrections for sky & object.
+        my_SNR : bool
+            If True, compute SNR using a robust sliding-window approach, where
+            for each point i, SNR(i) = robust_mean(window_around_i) / robust_std(window_around_i).
+            If False, compute a default SNR from propagated uncertainties.
+        plot_SNR : bool
+            If True, plot the final stitched SNR after plotting the stitched flux.
     
-        Example
+        Returns
         -------
-          star.plot_stitched_spectra(1, 2, subtract_sky=True, blaze_correction=True)
+        combined_wave, combined_flux, combined_snr : np.ndarray
+            The stitched wavelength, flux, and SNR arrays.
         """
+    
         # 1) Load data
         fits_file = self.load_observation(epoch_num, spectra_num, "1D")
         if not fits_file:
@@ -1038,23 +1047,17 @@ class NRES:
             return
     
         data = fits_file.data
-        wave_arrays  = np.array(data['wavelength'])
-        flux_arrays  = np.array(data['flux'])
-        uncertainty_arrays = np.array(data['uncertainty'])
-        blaze_arrays = np.array(data['blaze'])
+        wave_arrays         = np.array(data['wavelength'])
+        flux_arrays         = np.array(data['flux'])
+        uncertainty_arrays  = np.array(data['uncertainty'])
+        blaze_arrays        = np.array(data['blaze'])
         blaze_errors_arrays = np.array(data['blaze_error'])
     
         orders = len(wave_arrays)
         if orders == 0:
             print("No wavelength data found in the FITS. Aborting.")
             return
-
-        # Function to calculate a moving standard deviation
-        def moving_std(data, window):
-            half_window = window // 2
-            padded_data = np.pad(data, pad_width=half_window, mode='reflect')
-            return np.array([np.std(padded_data[i:i + window]) for i in range(len(data))])
-
+    
         # 2) We'll collect (wave_obj, flux_obj, snr_obj) for each order
         wave_list = []
         flux_list = []
@@ -1062,68 +1065,80 @@ class NRES:
     
         n_pairs = orders // 2
         for order_idx in range(n_pairs):
-            wave_list.append(wave_arrays[order_idx*2+1])
-            tmp_current_fluxes = (flux_arrays[order_idx*2+1]/blaze_arrays[order_idx*2+1]-flux_arrays[order_idx*2]/blaze_arrays[order_idx*2])
-            flux_list.append(tmp_current_fluxes)
-
-
-            if my_SNR:
-                # Window size: half-width
-                window_size = 20
-            
-                # flux_corrected is the final flux after blaze correction + sky subtraction.
-                # e.g.: flux_corrected = flux_obj_corrected - flux_sky_corrected
-                flux_corrected = tmp_current_fluxes  
-            
-                n_points = len(flux_corrected)
-            
-                # Prepare array to store local uncertainties
-                local_uncertainty = np.full_like(flux_corrected, np.nan)
-            
-                for i in range(n_points):
-                    # Define left/right boundaries for the local window
-                    start_idx = max(0, i - window_size)
-                    end_idx = min(n_points, i + window_size + 1)  # +1 because slicing is exclusive
-            
-                    # Extract the local slice of the flux
-                    window_flux = flux_corrected[start_idx:end_idx]
-            
-                    # 1) Compute robust mean of the window (removing outliers >3-sigma).
-                    local_mean = ut.robust_mean(window_flux, 3)
-            
-                    # 2) Compute robust std using the same or similar outlier rule.
-                    local_std = ut.robust_std(window_flux, 3)
-            
-                    # If your robust_std function automatically removes outliers around
-                    # a separate robust mean, you might want to confirm that it's 
-                    # consistent with local_mean above, or simply rely on robust_std 
-                    # for the final value.
-            
-                    local_uncertainty[i] = local_std if local_std > 0 else np.nan
-            
-                # Compute local SNR = flux / local_uncertainty
-                local_snr = np.where(local_uncertainty > 0,
-                                     flux_corrected / local_uncertainty,
-                                     np.nan)
-            
-                # Append or store the SNR array
-                snr_list.append(local_snr)
-            else:
-                snr_list.append(flux_list[-1]/np.sqrt(np.pow(uncertainty_arrays[order_idx*2+1]/blaze_arrays[order_idx*2+1],2) + 
-                         np.pow(uncertainty_arrays[order_idx*2]/blaze_arrays[order_idx*2],2) + 
-                         np.pow(flux_arrays[order_idx*2+1]*blaze_errors_arrays[order_idx*2+1]/np.pow(blaze_arrays[order_idx*2+1],2),2) +
-                         np.pow(flux_arrays[order_idx*2]*blaze_errors_arrays[order_idx*2]/np.pow(blaze_arrays[order_idx*2],2),2)))
-                    
+            # We'll use the object index for wave (assuming wave_arrays[2*i+1] is the target)
+            wave_obj = wave_arrays[order_idx*2 + 1]
+            wave_list.append(wave_obj)
     
-        # 3) Stitch them (assuming you have self.stitch_spectra_by_snr)
+            # -- Blaze correction + optional sky subtraction inline --
+            # object_flux / object_blaze - sky_flux / sky_blaze
+            flux_obj = flux_arrays[order_idx*2 + 1] / blaze_arrays[order_idx*2 + 1]
+            flux_sky = flux_arrays[order_idx*2]     / blaze_arrays[order_idx*2]
+            tmp_current_fluxes = flux_obj - flux_sky
+            flux_list.append(tmp_current_fluxes)
+    
+            # -- Compute SNR in either robust mode or default propagated mode --
+            if my_SNR:
+                # We want, for each point i, SNR(i) = local_mean / local_std
+                # where local_mean and local_std are robustly computed in a window around i.
+    
+                flux_corrected = tmp_current_fluxes
+                n_points = len(flux_corrected)
+    
+                local_snr = np.full_like(flux_corrected, np.nan)
+    
+                for i in range(n_points):
+                    start_idx = max(0, i - window_size)
+                    end_idx   = min(n_points, i + window_size + 1)
+    
+                    window_flux = flux_corrected[start_idx:end_idx]
+    
+                    # 1) robust_mean
+                    local_mean = ut.robust_mean(window_flux, 3)
+    
+                    # 2) robust_std
+                    local_std = ut.robust_std(window_flux, 3)
+    
+                    if local_std > 0:
+                        # SNR = local_mean / local_std
+                        local_snr[i] = local_mean / local_std
+                    else:
+                        local_snr[i] = np.nan
+    
+                snr_list.append(local_snr)
+    
+            else:
+                # --- Default SNR from propagated uncertainties ---
+                sky_unc   = uncertainty_arrays[order_idx*2]     / blaze_arrays[order_idx*2]
+                obj_unc   = uncertainty_arrays[order_idx*2 + 1] / blaze_arrays[order_idx*2 + 1]
+                blaze_sky_unc = (
+                    flux_arrays[order_idx*2]
+                    * blaze_errors_arrays[order_idx*2]
+                    / (blaze_arrays[order_idx*2]**2)
+                )
+                blaze_obj_unc = (
+                    flux_arrays[order_idx*2 + 1]
+                    * blaze_errors_arrays[order_idx*2 + 1]
+                    / (blaze_arrays[order_idx*2 + 1]**2)
+                )
+    
+                total_unc = np.sqrt(
+                    sky_unc**2 + obj_unc**2
+                    + blaze_sky_unc**2 + blaze_obj_unc**2
+                )
+                default_snr = tmp_current_fluxes / total_unc
+                snr_list.append(default_snr)
+    
+        # 3) Stitch them (assuming you have self._stitch_spectra_by_snr)
+        # Note: We flip them here if your method expects them in a certain order
         wave_list = np.flip(wave_list)
         flux_list = np.flip(flux_list)
         snr_list  = np.flip(snr_list)
+    
         combined_wave, combined_flux, combined_snr = self._stitch_spectra_by_snr(
             wave_list, flux_list, snr_list
         )
     
-        # 4) Plot final stitched result
+        # 4) Plot final stitched flux
         plt.figure(figsize=(8, 5))
         plt.plot(combined_wave, combined_flux, color='blue', label='Stitched Flux')
         plt.title(f"NRES Stitched Spectra: {self.star_name}, epoch={epoch_num}, spec={spectra_num}")
@@ -1133,10 +1148,427 @@ class NRES:
         plt.grid(True)
         plt.tight_layout()
         plt.show()
-
+    
+        # 5) Optionally plot the final stitched SNR
+        if plot_SNR:
+            plt.figure(figsize=(8, 5))
+            plt.plot(combined_wave, combined_snr, 'r-', label='Stitched SNR')
+            plt.title(f"NRES Stitched SNR: {self.star_name}, epoch={epoch_num}, spec={spectra_num}")
+            plt.xlabel("Wavelength (A)")
+            plt.ylabel("SNR = local_mean / local_std (or default SNR)")
+            plt.legend()
+            plt.grid(True)
+            plt.tight_layout()
+            plt.show()
+    
         return combined_wave, combined_flux, combined_snr
 
+    def plot_normalized_spectra(self, epoch_nums=None, spectra_nums=None, save=False,
+                                separate=True, initial_separation=100, bin_window=10, clean=True):
+        """
+        Improved implementation of the plot_normalized_spectra function:
+        Plots normalized spectra for the specified epoch(s) and spectra number(s).
+        If multiple curves are plotted and `separate` is True, a slider is added to adjust the vertical offset.
+        Precomputes data to improve dynamic slider performance.
 
+        Parameters
+        ----------
+        epoch_nums : int, str, or list, optional
+            The epoch number(s) to plot. If None, all epochs are used.
+        spectra_nums : int, str, or list, optional
+            The spectra number(s) to plot. If None, all spectra for each epoch are used.
+        save : bool, optional
+            If True, the figure is saved.
+        separate : bool, optional
+            If True, each spectrum is vertically offset; the offset is controlled via a slider.
+        initial_separation : float, optional
+            The initial vertical separation (offset) to apply between curves. Default is 100.
+        bin_window : int, optional
+            The binning window size (number of points per bin). Default is 10.
+        clean : bool, optional
+            If True (default), the method will attempt to load 'clean_normalized_flux'. If not available,
+            it will fall back to 'normalized_flux' and indicate it in the legend.
+
+        Returns
+        -------
+        None
+        """
+        from itertools import product
+        import os
+        from datetime import datetime
+        from matplotlib.widgets import Slider
+
+        # Process epoch_nums
+        if epoch_nums is None:
+            epoch_nums = self.get_all_epoch_numbers()
+        elif not isinstance(epoch_nums, list):
+            epoch_nums = [epoch_nums]
+
+        # Process spectra_nums
+        if spectra_nums is None:
+            specs_all = []
+            for ep in epoch_nums:
+                specs_all.extend(self.get_all_spectra_in_epoch(ep))
+            spectra_nums = list(set(specs_all))
+        elif not isinstance(spectra_nums, list):
+            spectra_nums = [spectra_nums]
+
+        # Generate all (epoch, spectra) combinations
+        combinations = list(product(epoch_nums, spectra_nums))
+        if len(combinations) == 0:
+            print("No valid epoch/spectra combinations found.")
+            return
+
+        fig, ax = plt.subplots(figsize=(12, 6))
+        curves = []
+        combo_list = []  # Store (epoch, spec) for each curve
+        precomputed_data = []  # Store precomputed curve data to avoid redundant calculations
+
+        # Loop over combinations and plot
+        for i, (ep, sp) in enumerate(combinations):
+            label_suffix = ""
+            try:
+                if clean:
+                    norm_data = self.load_property('clean_normalized_flux', ep, sp)
+                    if norm_data is None:
+                        raise ValueError("Clean property not found.")
+                    label_suffix = " (clean)"
+                else:
+                    raise ValueError("Clean flag False")
+            except Exception as e:
+                norm_data = self.load_property('normalized_flux', ep, sp)
+                label_suffix = " (unclean)"
+
+            wavelengths = norm_data['wavelengths']
+            normalized_flux = norm_data['normalized_flux']
+            # Bin the data if bin_window > 1
+            if bin_window > 1:
+                binned_wave = np.array([np.mean(wavelengths[j:j + bin_window])
+                                        for j in range(0, len(wavelengths), bin_window)])
+                binned_norm = np.array([ut.robust_mean(normalized_flux[j:j + bin_window], 3)
+                                        for j in range(0, len(normalized_flux), bin_window)])
+            else:
+                binned_wave = wavelengths
+                binned_norm = normalized_flux
+
+            # Precompute curve data to avoid recalculations
+            precomputed_data.append((binned_wave, binned_norm))
+            offset = initial_separation * i if separate else 0
+
+            line, = ax.plot(binned_wave, binned_norm + offset,
+                            label=f"Epoch {ep}, Spec {sp}{label_suffix}")
+            curves.append(line)
+            combo_list.append((ep, sp))
+
+        ax.set_xlabel('Wavelength (Angstrom)')
+        ax.set_ylabel('Normalized Flux')
+        ax.set_title(f'Normalized Spectra for {self.star_name}')
+        ax.legend()
+        ax.grid(True)
+        plt.tight_layout()
+
+        # Add slider for vertical separation if needed
+        if separate and len(curves) > 1:
+            ax_slider = plt.axes([0.1, 0.01, 0.8, 0.03])
+            slider = Slider(ax_slider, 'Separation', 0, 500, valinit=initial_separation)
+
+            def update(val):
+                sep = slider.val
+                for j, (binned_wave, binned_norm) in enumerate(precomputed_data):
+                    curves[j].set_ydata(binned_norm + sep * j)
+                fig.canvas.draw_idle()
+
+            slider.on_changed(update)
+
+        if save:
+            output_dir = os.path.join(self.data_dir, self.star_name, 'output', 'Figures')
+            os.makedirs(output_dir, exist_ok=True)
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"{self.star_name}_normalized_{timestamp}.png"
+            save_path = os.path.join(output_dir, filename)
+            plt.savefig(save_path)
+            print(f"Figure saved to '{save_path}'")
+
+        plt.show()
+
+    def plot_normalized_spectra_old(self, epoch_nums=None, spectra_nums=None, save=False,
+                                separate=True, initial_separation=100, bin_window=10, clean=True):
+        """
+        Plots normalized spectra for the specified epoch(s) and spectra number(s).
+        If multiple curves are plotted and `separate` is True, a slider is added to adjust the vertical offset.
+        Additionally, if bin_window > 1, the spectra are binned over the specified window.
+
+        A new flag `clean` (default True) is added: if True, the function first tries to load the
+        property 'clean_normalized_flux' and, if found, plots that. If not, it falls back to using
+        'normalized_flux' and adds a note "(unclean)" in the legend.
+
+        Parameters
+        ----------
+        epoch_nums : int, str, or list, optional
+            The epoch number(s) to plot. If None, all epochs are used.
+        spectra_nums : int, str, or list, optional
+            The spectra number(s) to plot. If None, all spectra for each epoch are used.
+        save : bool, optional
+            If True, the figure is saved.
+        separate : bool, optional
+            If True, each spectrum is vertically offset; the offset is controlled via a slider.
+        initial_separation : float, optional
+            The initial vertical separation (offset) to apply between curves. Default is 100.
+        bin_window : int, optional
+            The binning window size (number of points per bin). Default is 10.
+        clean : bool, optional
+            If True (default), the method will attempt to load 'clean_normalized_flux'. If not available,
+            it will fall back to 'normalized_flux' and indicate it in the legend.
+
+        Returns
+        -------
+        None
+        """
+        from itertools import product
+        import os
+        from datetime import datetime
+
+        # Process epoch_nums
+        if epoch_nums is None:
+            epoch_nums = self.get_all_epoch_numbers()
+        elif not isinstance(epoch_nums, list):
+            epoch_nums = [epoch_nums]
+
+        # Process spectra_nums
+        if spectra_nums is None:
+            specs_all = []
+            for ep in epoch_nums:
+                specs_all.extend(self.get_all_spectra_in_epoch(ep))
+            spectra_nums = list(set(specs_all))
+        elif not isinstance(spectra_nums, list):
+            spectra_nums = [spectra_nums]
+
+        # Generate all (epoch, spectra) combinations.
+        combinations = list(product(epoch_nums, spectra_nums))
+        if len(combinations) == 0:
+            print("No valid epoch/spectra combinations found.")
+            return
+
+        fig, ax = plt.subplots(figsize=(12, 6))
+        curves = []
+        combo_list = []  # store (epoch, spec) for each curve
+
+        # Loop over combinations and plot
+        for i, (ep, sp) in enumerate(combinations):
+            label_suffix = ""
+            try:
+                if clean:
+                    norm_data = self.load_property('clean_normalized_flux', ep, sp)
+                    if norm_data is None:
+                        raise ValueError("Clean property not found.")
+                    label_suffix = " (clean)"
+                else:
+                    raise ValueError("Clean flag False")
+            except Exception as e:
+                norm_data = self.load_property('normalized_flux', ep, sp)
+                label_suffix = " (unclean)"
+
+            wavelengths = norm_data['wavelengths']
+            normalized_flux = norm_data['normalized_flux']
+            # Bin the data if bin_window > 1.
+            if bin_window > 1:
+                binned_wave = np.array([np.mean(wavelengths[j:j + bin_window])
+                                        for j in range(0, len(wavelengths), bin_window)])
+                binned_norm = np.array([ut.robust_mean(normalized_flux[j:j + bin_window], 3)
+                                        for j in range(0, len(normalized_flux), bin_window)])
+            else:
+                binned_wave = wavelengths
+                binned_norm = normalized_flux
+
+            # Apply vertical offset if separation is enabled.
+            if separate:
+                offset = initial_separation * i
+            else:
+                offset = 0
+
+            line, = ax.plot(binned_wave, binned_norm + offset,
+                            label=f"Epoch {ep}, Spec {sp}{label_suffix}")
+            curves.append(line)
+            combo_list.append((ep, sp))
+
+        ax.set_xlabel('Wavelength (Angstrom)')
+        ax.set_ylabel('Normalized Flux')
+        ax.set_title(f'Normalized Spectra for {self.star_name}')
+        ax.legend()
+        ax.grid(True)
+        plt.tight_layout()
+
+        # Add slider for vertical separation if needed.
+        if separate and len(curves) > 1:
+            from matplotlib.widgets import Slider
+            ax_slider = plt.axes([0.1, 0.01, 0.8, 0.03])
+            slider = Slider(ax_slider, 'Separation', 0, 500, valinit=initial_separation)
+
+            def update(val):
+                sep = slider.val
+                for j, (ep, sp) in enumerate(combo_list):
+                    try:
+                        norm_data = self.load_property('normalized_flux', ep, sp)
+                        wavelengths = norm_data['wavelengths']
+                        normalized_flux = norm_data['normalized_flux']
+                        if bin_window > 1:
+                            binned_wave = np.array([np.mean(wavelengths[k:k + bin_window])
+                                                    for k in range(0, len(wavelengths), bin_window)])
+                            binned_norm = np.array([ut.robust_mean(normalized_flux[k:k + bin_window], 3)
+                                                    for k in range(0, len(normalized_flux), bin_window)])
+                        else:
+                            binned_wave = wavelengths
+                            binned_norm = normalized_flux
+                        curves[j].set_ydata(binned_norm + sep * j)
+                    except Exception as e:
+                        print(f"Error updating curve for Epoch {ep}, Spec {sp}: {e}")
+                fig.canvas.draw_idle()
+
+            slider.on_changed(update)
+
+        if save:
+            output_dir = os.path.join(self.data_dir, self.star_name, 'output', 'Figures')
+            os.makedirs(output_dir, exist_ok=True)
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"{self.star_name}_normalized_{timestamp}.png"
+            save_path = os.path.join(output_dir, filename)
+            plt.savefig(save_path)
+            print(f"Figure saved to '{save_path}'")
+
+        plt.show()
+
+    def plot_normalized_spectra_old(self, epoch_nums=None, spectra_nums=None, save=False,
+                                separate=True, initial_separation=100, bin_window=10):
+        """
+        Plots normalized spectra for the specified epoch(s) and spectra number(s).
+        If multiple curves are plotted and `separate` is True, a slider is added to adjust the vertical offset.
+        Additionally, if bin_window > 1, the spectra are binned over the specified window to improve clarity.
+
+        Parameters
+        ----------
+        epoch_nums : int, str, or list, optional
+            The epoch number(s) to plot. If None, all epochs are used.
+        spectra_nums : int, str, or list, optional
+            The spectra number(s) to plot. If None, all spectra for each epoch are used.
+        save : bool, optional
+            If True, saves the figure.
+        separate : bool, optional
+            If True, each spectrum is vertically offset; controlled via a slider.
+        initial_separation : float, optional
+            The initial vertical separation offset. Default is 100.
+        bin_window : int, optional
+            The number of data points to bin together. Default is 10.
+
+        Returns
+        -------
+        None
+        """
+        from itertools import product
+        import os
+        from datetime import datetime
+
+        # Process epoch_nums
+        if epoch_nums is None:
+            epoch_nums = self.get_all_epoch_numbers()
+        elif not isinstance(epoch_nums, list):
+            epoch_nums = [epoch_nums]
+
+        # Process spectra_nums
+        if spectra_nums is None:
+            specs_all = []
+            for ep in epoch_nums:
+                specs_all.extend(self.get_all_spectra_in_epoch(ep))
+            spectra_nums = list(set(specs_all))
+        elif not isinstance(spectra_nums, list):
+            spectra_nums = [spectra_nums]
+
+        # Generate combinations of (epoch, spectra)
+        combinations = list(product(epoch_nums, spectra_nums))
+        if len(combinations) == 0:
+            print("No valid epoch/spectra combinations found.")
+            return
+
+        plt.figure(figsize=(12, 6))
+        curves = []
+        combo_list = []  # Keep track of which combo corresponds to which curve
+
+        for i, (ep, sp) in enumerate(combinations):
+            try:
+                norm_data = self.load_property('normalized_flux', ep, sp)
+                mask =np.where(norm_data['normalized_flux'] > 0)
+                wavelengths = norm_data['wavelengths'][mask]
+                normalized_flux = norm_data['normalized_flux'][mask]
+                # Bin the data if bin_window > 1.
+                if bin_window > 1:
+                    binned_wave = np.array([np.mean(wavelengths[j:j + bin_window])
+                                            for j in range(0, len(wavelengths), bin_window)])
+                    # Use robust mean with sigma=3 for flux binning.
+                    binned_norm = np.array([np.mean(normalized_flux[j:j + bin_window])
+                                            for j in range(0, len(normalized_flux), bin_window)])
+                else:
+                    binned_wave = wavelengths
+                    binned_norm = normalized_flux
+
+                # Compute vertical offset if separation is enabled.
+                if separate:
+                    offset = initial_separation * i
+                else:
+                    offset = 0
+                line, = plt.plot(binned_wave, binned_norm + offset,
+                                 label=f"Epoch {ep}, Spec {sp}")
+                curves.append(line)
+                combo_list.append((ep, sp))
+            except Exception as e:
+                print(f"Error loading normalized spectrum for Epoch {ep}, Spec {sp}: {e}")
+                continue
+
+        plt.xlabel('Wavelength (nm)')
+        plt.ylabel('Normalized Flux')
+        plt.title(f"Normalized Spectra for {self.star_name}")
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+
+        # If separation is enabled and more than one curve is plotted, add a slider.
+        if separate and len(curves) > 1:
+            from matplotlib.widgets import Slider
+            ax_slider = plt.axes([0.1, 0.01, 0.8, 0.03])
+            slider = Slider(ax_slider, 'Separation', 0, 500, valinit=initial_separation)
+
+            def update(val):
+                sep = slider.val
+                for j, (ep, sp) in enumerate(combo_list):
+                    try:
+                        norm_data = self.load_property('normalized_flux', ep, sp)
+                        mask = np.where(norm_data['normalized_flux'] > 0)
+                        wavelengths = norm_data['wavelengths'][mask]
+                        normalized_flux = norm_data['normalized_flux'][mask]
+                        if bin_window > 1:
+                            binned_wave = np.array([np.mean(wavelengths[k:k + bin_window])
+                                                    for k in range(0, len(wavelengths), bin_window)])
+                            binned_norm = np.array([np.mean(normalized_flux[k:k + bin_window])
+                                                    for k in range(0, len(normalized_flux), bin_window)])
+                        else:
+                            binned_wave = wavelengths
+                            binned_norm = normalized_flux
+                        curves[j].set_ydata(binned_norm + sep * j)
+                    except Exception as e:
+                        print(f"Error updating curve for Epoch {ep}, Spec {sp}: {e}")
+                plt.gcf().canvas.draw_idle()
+
+            slider.on_changed(update)
+
+        # Optionally save the figure.
+        if save:
+            output_dir = os.path.join(self.data_dir, self.star_name, 'output', 'Figures')
+            os.makedirs(output_dir, exist_ok=True)
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            filename = f"{self.star_name}_normalized_{timestamp}.png"
+            save_path = os.path.join(output_dir, filename)
+            plt.savefig(save_path)
+            print(f"Figure saved to '{save_path}'")
+
+        plt.show()
 
     def plot_spectra(self, *args, **kwargs):
         """ Empty placeholder method for plotting spectra. """
@@ -1148,7 +1580,7 @@ class NRES:
 
     ########################################  Method Executor  ########################################
 
-    def execute_method(self, method, params={}, epoch_nums=None, spectra_nums=None,
+    def execute_method_old(self, method, params={}, epoch_nums=None, spectra_nums=None,
                        data_types=None, overwrite=False, backup=True, save=True,
                        parallel=False, max_workers=None):
         """
@@ -1217,7 +1649,127 @@ class NRES:
                 results.append(out)
         return results
 
-    def _method_wrapper(self, method, params, overwrite, backup, multiple_params, save):
+    def execute_method(self, method,filename, params={}, epoch_nums=None, spectra_nums=None,
+                       overwrite=False, backup=True, save=True, parallel=False, 
+                       max_workers=None):
+        """
+        Executes a given method across multiple epochs and spectra.
+    
+        Parameters:
+            method : function
+                The function to execute.
+            params : dict
+                Parameters to pass to the function.
+            epoch_nums : list or int/str
+                Epoch numbers to process.
+            spectra_nums : list or int/str
+                Spectra numbers to process.
+            overwrite : bool
+                Whether to overwrite existing data.
+            backup : bool
+                Whether to create a backup before overwriting.
+            save : bool
+                Whether to save the result.
+            parallel : bool
+                Whether to execute in parallel.
+            max_workers : int or None
+                Number of parallel workers.
+            filename : str or None
+                The filename to use for saving the results.
+    
+        Returns:
+            list : A list of results from executing the method.
+        """
+        if epoch_nums is None:
+            epoch_nums = self.get_all_epoch_numbers()
+        elif isinstance(epoch_nums, (int, str)):
+            epoch_nums = [epoch_nums]
+    
+        if spectra_nums and isinstance(spectra_nums, (int, str)):
+            spectra_nums = [spectra_nums]
+    
+        # Build combinations of epochs and spectra
+        from itertools import product
+        param_keys = list(params.keys())
+        param_values_lists = [[v] if not isinstance(v, list) else v for v in params.values()]
+    
+        final_params = []
+        for ep in epoch_nums:
+            for sp in (spectra_nums if spectra_nums else self.get_all_spectra_in_epoch(ep)):
+                for pvals in product(*param_values_lists):
+                    p = {'epoch_num': ep, 'spectra_num': sp, 'data_type': '1D'}
+                    for k, v in zip(param_keys, pvals):
+                        p[k] = v
+                    final_params.append(p)
+    
+        multiple = len(final_params) > 1
+    
+        if parallel:
+            if max_workers is None:
+                max_workers = multiprocess.cpu_count() - 1
+            with multiprocess.Pool(processes=max_workers) as pool:
+                f = partial(self._method_wrapper, method, filename,
+                            overwrite=overwrite, backup=backup,
+                            multiple_params=multiple, save=save)
+                results = pool.map(f, final_params)
+        else:
+            results = []
+            for fp in final_params:
+                out = self._method_wrapper(method, fp, filename, overwrite, backup, multiple, save)
+                results.append(out)
+    
+        return results
+
+
+
+    def _method_wrapper(self, method, params, filename, overwrite, backup, multiple_params, save):
+        """
+        Wrapper to execute a method with given parameters and handle saving.
+    
+        Parameters:
+            method : function
+                The function to execute.
+            params : dict
+                Parameters to pass to the function.
+            filename : str or None
+                Filename to use in self.save_property().
+            overwrite : bool
+                Whether to overwrite existing data.
+            backup : bool
+                Whether to create a backup before overwriting.
+            multiple_params : bool
+                Whether multiple parameter sets are being used.
+            save : bool
+                Whether to save the result.
+    
+        Returns:
+            result : any
+                The result of executing the function.
+        """
+        try:
+            result = method(**params)
+    
+            if save and filename:
+                epoch_num = params.get('epoch_num')
+                spectra_num = params.get('spectra_num')
+                data_type = params.get('data_type', '1D')
+    
+                if epoch_num is None or spectra_num is None:
+                    print(f"Skipping save: Missing epoch_num or spectra_num in params: {params}")
+                else:
+                    # Save using provided filename
+                    self.save_property(filename, result, epoch_num, spectra_num,
+                                       data_type=data_type, overwrite=overwrite, backup=backup)
+                    print(f"Saved result as '{filename}' for epoch {epoch_num}, spec {spectra_num}.")
+    
+            return result
+    
+        except Exception as e:
+            print(f"Error running method {method.__name__} with {params}: {e}")
+            return None
+
+    
+    def _method_wrapper_old(self, method, params, overwrite, backup, multiple_params, save):
         """
         Internal helper for method execution + save.
         """
@@ -1301,11 +1853,11 @@ class NRES:
             return None, None, None
     
         data = fits_file.data
-        wave_arrays  = np.array(data['wavelength'])
-        flux_arrays  = np.array(data['flux'])
-        uncertainty_arrays = np.array(data['uncertainty'])
-        blaze_arrays = np.array(data['blaze'])
-        blaze_errors_arrays = np.array(data['blaze_error'])
+        wave_arrays  = np.array(data['wavelength'])[::-1]
+        flux_arrays  = np.array(data['flux'])[::-1]
+        uncertainty_arrays = np.array(data['uncertainty'])[::-1]
+        blaze_arrays = np.array(data['blaze'])[::-1]
+        blaze_errors_arrays = np.array(data['blaze_error'])[::-1]
     
         orders = len(wave_arrays)
         if orders == 0:
@@ -1371,3 +1923,393 @@ class NRES:
         )
     
         return combined_wave, combined_flux, combined_snr
+
+    def get_stitched_spectra2(self, epoch_num, spectra_num, subtract_sky=True, direct_snr_method=False,window_size = 20):
+        """
+        Similar to plot_stitched_spectra, but returns (wave, flux, snr)
+        WITHOUT opening any figure or calling plt.show().
+        
+        Parameters
+        ----------
+        epoch_num : int or str
+            Which epoch folder to load from.
+        spectra_num : int or str
+            Which spectrum folder inside that epoch.
+        subtract_sky : bool
+            If True, subtract sky from object in each pair.
+            (We assume wave_arrays, flux_arrays come in pairs of (sky, obj).)
+        direct_snr_method : bool
+            If True, compute SNR using a direct method: for each flux point in the corrected flux,
+            use a sliding window of 20 flux values and compute its robust standard deviation (with 3σ)
+            via ut.robust_std, then SNR = flux / std.
+            If False, compute SNR using the original method that propagates uncertainties and blaze errors.
+        
+        Returns
+        -------
+        combined_wave : 1D np.array
+        combined_flux : 1D np.array
+        combined_snr  : 1D np.array
+            Stitched arrays, or None if something failed.
+        """
+        # 1) Load data from your 1D FITS
+        fits_file = self.load_observation(epoch_num, spectra_num, "1D")
+        if not fits_file:
+            print(f"Failed to load observation for epoch={epoch_num}, spec={spectra_num}")
+            return None, None, None
+    
+        data = fits_file.data
+        # print(data['wavelength'][40:45,30:40])
+        wave_arrays  = np.array(data['wavelength'])[::-1]
+        # print(wave_arrays[40:45,300:310])
+        flux_arrays  = np.array(data['flux'])[::-1]
+        uncertainty_arrays = np.array(data['uncertainty'])[::-1]
+        blaze_arrays = np.array(data['blaze'])[::-1]
+        blaze_errors_arrays = np.array(data['blaze_error'])[::-1]
+        # beyond this point the data is arranged in an ascending manner
+    
+        orders = len(wave_arrays)
+        if orders == 0:
+            print("No wavelength data found in the FITS. Aborting.")
+            return None, None, None
+    
+        # 2) Collect wave/flux/snr for each order
+        wave_list = []
+        flux_list = []
+        snr_list  = []
+    
+        n_pairs = orders // 2
+        for order_idx in range(n_pairs):
+            # We'll call the sky is [2*order_idx], object is [2*order_idx + 1]
+            # Adjust if your data format is reversed
+            wave_obj = wave_arrays[order_idx*2]
+            flux_obj = flux_arrays[order_idx*2] / blaze_arrays[order_idx*2]
+            wave_sky = wave_arrays[order_idx*2 + 1]
+            flux_sky = flux_arrays[order_idx*2 + 1] / blaze_arrays[order_idx*2 + 1]
+    
+            if subtract_sky:
+                tmp_flux = flux_obj - flux_sky
+            else:
+                tmp_flux = flux_obj
+    
+            # Calculate SNR
+            if direct_snr_method:
+                # New direct method: for each flux point, take a sliding window of 20 points,
+                # compute its robust std with 3 sigma via ut.robust_std, then SNR = flux / std.
+                tmp_snr = np.empty_like(tmp_flux)
+                window_size = 4
+                half_window = window_size // 2
+                for i in range(len(tmp_flux)):
+                    start = max(0, i - half_window)
+                    end = min(len(tmp_flux), i + half_window)
+                    window = tmp_flux[start:end]
+                    sigma = ut.robust_std(window, 3)
+                    # sigma = np.std(windows)
+                    # Avoid division by zero
+                    if sigma == 0:
+                        tmp_snr[i] = 0
+                    else:
+                        tmp_snr[i] = ut.robust_mean(window,3) / sigma
+                        if ut.robust_mean(window,3) < 0:
+                            print(f'bad order! {order_idx}')
+                        # tmp_snr[i] = np.mean(window) / sigma
+                        # tmp_snr[i] = tmp_flux[i] / sigma
+            else:
+                # Original method: compute uncertainties + blaze errors
+                unc_obj = uncertainty_arrays[order_idx*2 + 1] / blaze_arrays[order_idx*2 + 1]
+                unc_sky = uncertainty_arrays[order_idx*2]     / blaze_arrays[order_idx*2]
+                blaze_err_obj = blaze_errors_arrays[order_idx*2 + 1]
+                blaze_err_sky = blaze_errors_arrays[order_idx*2]
+                
+                flux_obj_blazeerr = (
+                    flux_arrays[order_idx*2 + 1]
+                    * blaze_err_obj
+                    / (blaze_arrays[order_idx*2 + 1]**2)
+                )
+                flux_sky_blazeerr = (
+                    flux_arrays[order_idx*2]
+                    * blaze_err_sky
+                    / (blaze_arrays[order_idx*2]**2)
+                )
+                total_uncert = np.sqrt(
+                    unc_obj**2
+                    + unc_sky**2
+                    + flux_obj_blazeerr**2
+                    + flux_sky_blazeerr**2
+                )
+                tmp_snr = tmp_flux / total_uncert
+    
+            wave_list.append(wave_obj)
+            flux_list.append(tmp_flux)
+            snr_list.append(tmp_snr)
+            # if order_idx == 20:
+            #     # print(f'wave: {wave_list}')
+            #     print(f'flux: {flux_list[0]}')
+            plt.plot(wave_obj,tmp_flux)
+    
+        # 3) Flip order if needed (e.g. if short to long wave is reversed)
+        # wave_list = np.flip(wave_list)
+        # flux_list = np.flip(flux_list)
+        # snr_list  = np.flip(snr_list)
+    
+        # 4) Stitch them with your existing method
+
+        plt.show()
+        combined_wave, combined_flux, combined_snr = self._stitch_spectra_by_snr(
+            wave_list, flux_list, snr_list
+        )
+    
+        return combined_wave, combined_flux, combined_snr
+
+    def get_stitched_spectra3(self, epoch_num, spectra_num, subtract_sky=True, direct_snr_method=False, window_size=20, remove_low_blaze=True):
+        """
+        Similar to plot_stitched_spectra, but returns (wave, flux, snr)
+        WITHOUT opening any figure or calling plt.show().
+        
+        Parameters
+        ----------
+        epoch_num : int or str
+            Which epoch folder to load from.
+        spectra_num : int or str
+            Which spectrum folder inside that epoch.
+        subtract_sky : bool
+            If True, subtract sky from object in each pair.
+            (We assume wave_arrays, flux_arrays come in pairs of (sky, obj).)
+        direct_snr_method : bool
+            If True, compute SNR using a direct method: for each flux point in the corrected flux,
+            use a sliding window of `window_size` flux values and compute its robust standard deviation (with 3σ)
+            via ut.robust_std, then SNR = robust_mean(window, 3) / std.
+            If False, compute SNR using the original method that propagates uncertainties and blaze errors.
+        window_size : int, optional
+            Window size to use for the direct SNR method.
+        remove_low_blaze : bool, optional
+            If True (default), remove data points where either the object or sky blaze value is below 10%
+            of its order maximum.
+        
+        Returns
+        -------
+        combined_wave : 1D np.array
+            Combined wavelength array.
+        combined_flux : 1D np.array
+            Combined flux array.
+        combined_snr : 1D np.array
+            Combined SNR array.
+            Stitched arrays, or None if something failed.
+        """
+        # 1) Load data from your 1D FITS
+        fits_file = self.load_observation(epoch_num, spectra_num, "1D")
+        if not fits_file:
+            print(f"Failed to load observation for epoch={epoch_num}, spec={spectra_num}")
+            return None, None, None
+    
+        data = fits_file.data
+        # Reverse the order of the arrays (assuming they come in descending order)
+        wave_arrays         = np.array(data['wavelength'])[::-1]
+        flux_arrays         = np.array(data['flux'])[::-1]
+        uncertainty_arrays  = np.array(data['uncertainty'])[::-1]
+        blaze_arrays        = np.array(data['blaze'])[::-1]
+        blaze_errors_arrays = np.array(data['blaze_error'])[::-1]
+        # beyond this point the data is arranged in an ascending manner
+    
+        orders = len(wave_arrays)
+        if orders == 0:
+            print("No wavelength data found in the FITS. Aborting.")
+            return None, None, None
+    
+        # 2) Collect wave/flux/snr for each order
+        wave_list = []
+        flux_list = []
+        snr_list  = []
+    
+        n_pairs = orders // 2
+        for order_idx in range(n_pairs):
+            # Assume: sky is at index 2*order_idx, object at index 2*order_idx + 1.
+            # Extract object and sky arrays:
+            index_obj = order_idx * 2
+            index_sky = order_idx * 2 + 1
+            if self.star_name == 'WR17' and (epoch_num == 2 or epoch_num ==3):
+                index_obj = order_idx * 2 + 1
+                index_sky = order_idx * 2
+    
+            wave_obj = wave_arrays[index_obj]
+            flux_obj = flux_arrays[index_obj] / blaze_arrays[index_obj]
+            wave_sky = wave_arrays[index_sky]
+            flux_sky = flux_arrays[index_sky] / blaze_arrays[index_sky]
+    
+            # If enabled, remove data points where either blaze value is below 10% of its max.
+            if remove_low_blaze:
+                max_blaze_obj = np.max(blaze_arrays[index_obj])
+                max_blaze_sky = np.max(blaze_arrays[index_sky])
+                # Create a mask: if either object or sky blaze is below 10% of its max, discard that point.
+                mask = (blaze_arrays[index_obj] >= 0.1 * max_blaze_obj) & (blaze_arrays[index_sky] >= 0.1 * max_blaze_sky)
+                wave_obj = wave_obj[mask]
+                flux_obj = flux_obj[mask]
+                wave_sky = wave_sky[mask]
+                flux_sky = flux_sky[mask]
+    
+            # Subtract sky if requested.
+            if subtract_sky:
+                tmp_flux = flux_obj - flux_sky
+            else:
+                tmp_flux = flux_obj
+    
+            # Calculate SNR.
+            if direct_snr_method:
+                tmp_snr = np.empty_like(tmp_flux)
+                half_window = window_size // 2
+                for i in range(len(tmp_flux)):
+                    start = max(0, i - half_window)
+                    end = min(len(tmp_flux), i + half_window)
+                    window = tmp_flux[start:end]
+                    sigma = ut.robust_std(window, 3)
+                    # Avoid division by zero
+                    if sigma == 0:
+                        tmp_snr[i] = 0
+                    else:
+                        tmp_snr[i] = ut.robust_mean(window, 3) / sigma
+                        # tmp_snr[i] = ut.robust_mean(window, 3) 
+                        # tmp_snr[i] = np.mean(window)/sigma
+            else:
+                unc_obj = uncertainty_arrays[index_sky] / blaze_arrays[index_sky]
+                unc_sky = uncertainty_arrays[index_obj] / blaze_arrays[index_obj]
+                blaze_err_obj = blaze_errors_arrays[index_sky]
+                blaze_err_sky = blaze_errors_arrays[index_obj]
+                
+                flux_obj_blazeerr = (
+                    flux_arrays[index_sky] * blaze_err_obj / (blaze_arrays[index_sky]**2)
+                )
+                flux_sky_blazeerr = (
+                    flux_arrays[index_obj] * blaze_err_sky / (blaze_arrays[index_obj]**2)
+                )
+                total_uncert = np.sqrt(
+                    unc_obj**2 + unc_sky**2 + flux_obj_blazeerr**2 + flux_sky_blazeerr**2
+                )
+                tmp_snr = tmp_flux / total_uncert
+    
+            wave_list.append(wave_obj)
+            flux_list.append(tmp_flux)
+            snr_list.append(tmp_snr)
+            # plt.plot(wave_obj, tmp_flux)
+    
+        # plt.show()
+        # 4) Stitch them with your existing method.
+        combined_wave, combined_flux, combined_snr = self._stitch_spectra_by_snr(
+            wave_list, flux_list, snr_list
+        )
+    
+        return combined_wave, combined_flux, combined_snr
+
+    def clean_bad_pixels(self, epoch=None, spectra_nums=None, backup=True, overwrite=True):
+        """
+        Cleans the normalized flux data for one or more epochs by identifying wavelengths
+        (bad pixels) where the flux is non-positive in every spectrum (based solely on the
+        original data), and replaces those bad pixel values with linear interpolation from
+        neighboring good pixels.
+
+        For any wavelength where at least one spectrum has a non-positive value but not
+        all do, it prints the (wavelength, average flux) from the original data.
+
+        The cleaned normalized flux for each spectrum is saved using self.save_property()
+        under the property name 'clean_normalized_flux'.
+
+        Parameters
+        ----------
+        epoch : int, str, list, or None
+            The epoch identifier(s). If None, all epochs are processed.
+        spectra_nums : list or None
+            A list of spectra numbers to process for each epoch. If None, all spectra in that epoch are processed.
+        backup : bool, optional
+            Whether to back up existing data before overwriting (default True).
+        overwrite : bool, optional
+            Whether to overwrite existing saved data (default True).
+
+        Returns
+        -------
+        None
+        """
+        import numpy as np
+
+        # Determine the epochs to process.
+        if epoch is None:
+            epoch_list = self.get_all_epoch_numbers()
+        elif not isinstance(epoch, list):
+            epoch_list = [epoch]
+        else:
+            epoch_list = epoch
+
+        for ep in epoch_list:
+            # Determine spectra for this epoch.
+            if spectra_nums is None:
+                sp_list = self.get_all_spectra_in_epoch(ep)
+            elif not isinstance(spectra_nums, list):
+                sp_list = [spectra_nums]
+            else:
+                sp_list = spectra_nums
+
+            # Load the original normalized flux data for each spectrum in this epoch.
+            orig_norm_data = {}
+            for sp in sp_list:
+                try:
+                    norm_data = self.load_property('normalized_flux', ep, sp)
+                    if norm_data is None:
+                        print(f"Normalized flux not found for epoch {ep}, spec {sp}. Skipping.")
+                        continue
+                    orig_norm_data[sp] = norm_data
+                except Exception as e:
+                    print(f"Error loading normalized flux for epoch {ep}, spec {sp}: {e}")
+                    continue
+
+            if not orig_norm_data:
+                print(f"No normalized flux data available for epoch {ep}.")
+                continue
+
+            # Assume all spectra share the same wavelength grid.
+            first_sp = list(orig_norm_data.keys())[0]
+            wavelengths = np.array(orig_norm_data[first_sp]['wavelengths'])
+            n_points = len(wavelengths)
+
+            # Build a flux matrix using the original data.
+            flux_matrix = []
+            valid_specs = []
+            for sp in sorted(orig_norm_data.keys()):
+                flux = np.array(orig_norm_data[sp]['normalized_flux'])
+                if len(flux) != n_points:
+                    print(f"Warning: Spectrum {sp} has a different wavelength grid. Skipping.")
+                    continue
+                flux_matrix.append(flux)
+                valid_specs.append(sp)
+            if len(flux_matrix) == 0:
+                print(f"No spectra with consistent wavelength grid found for epoch {ep}.")
+                continue
+            flux_matrix = np.array(flux_matrix)  # Shape: (M, N)
+
+            # Create a "bad mask": for each wavelength index, mark it as bad if every spectrum has flux <= 0.
+            bad_mask = np.all(flux_matrix <= 0, axis=0)
+
+            # For indices where at least one spectrum is non-positive but not all are,
+            # print the (wavelength, average flux) from the original data.
+            for i in range(n_points):
+                if np.any(flux_matrix[:, i] <= 0) and not bad_mask[i]:
+                    avg_flux = np.mean(flux_matrix[:, i])
+                    print(
+                        f"Retaining pixel at wavelength {wavelengths[i]:.2f} with average flux {avg_flux:.2f} (not negative in all spectra)")
+
+            # For each valid spectrum, interpolate to fix bad pixels using the original flux.
+            for sp in valid_specs:
+                try:
+                    orig_flux = np.array(orig_norm_data[sp]['normalized_flux'])
+                    good_idx = np.where(orig_flux > 0)[0]
+                    if len(good_idx) < 2:
+                        print(
+                            f"Not enough good pixels for epoch {ep}, spec {sp} to interpolate. Skipping cleaning for this spectrum.")
+                        continue
+                    cleaned_flux = orig_flux.copy()
+                    bad_idx = np.where(bad_mask)[0]
+                    cleaned_flux[bad_idx] = np.interp(wavelengths[bad_idx],
+                                                      wavelengths[good_idx],
+                                                      orig_flux[good_idx])
+                    clean_data = {'wavelengths': wavelengths, 'normalized_flux': cleaned_flux}
+                    self.save_property('clean_normalized_flux', clean_data, ep, sp, overwrite=overwrite, backup=backup)
+                    print(f"Cleaned normalized flux saved for epoch {ep}, spec {sp}.")
+                except Exception as e:
+                    print(f"Error cleaning spectrum for epoch {ep}, spec {sp}: {e}")
+                    continue

@@ -17,6 +17,9 @@ No file I/O, no FITS header logic – just NumPy arrays in / out.
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
+from pathlib import Path
+from datetime import datetime
+import re
 
 clight = 2.9979e5  # km s⁻¹
 
@@ -35,7 +38,10 @@ class CCFclass:
                  PlotAll:   bool = False,
                  star_name: str | None = None,
                  epoch: str | int | None = None,
-                 line_tag: str = ""):
+                 line_tag: str = "",
+                 savePlot: bool = False,
+                 run_ts: str = "",
+                 nm: bool = True):
         # ---- original parameters --------------------------------------
         self.intr_kind    = intr_kind
         self.Fit_Range_in_fraction  = Fit_Range_in_fraction
@@ -46,11 +52,14 @@ class CCFclass:
         self.PlotFirst   = PlotFirst
         self.PlotAll = PlotAll
         self._first_done = not PlotFirst
+        self.savePlot = savePlot
 
         # ---- new contextual metadata ----------------------------------
         self.star_name = star_name or "unknown‑star"
         self.epoch     = epoch
         self.line_tag  = line_tag
+        self.run_ts = run_ts
+        self.nm = nm
 
 
     # ------------------------------------------------------------------ #
@@ -62,32 +71,41 @@ class CCFclass:
         return np.sum(f1 * f2) / np.std(f1) / np.std(f2) / N
 
 
-    # remove duplicates **after** log-transform, keep first occurrence
-    @staticmethod
-    def _prep_spectrum(wave, flux):
-        logw = np.log(wave)
-        order = np.argsort(logw)
-        logw, flux = logw[order], flux[order]
-        _, keep = np.unique(logw, return_index=True)
-        return logw[keep], flux[keep]
-
     # ------------------------------------------------------------------ #
     # internal core: parabola-fit cross-correlation                       #
     # ------------------------------------------------------------------ #
     def _crosscorreal(self, Observation, Mask, CrossCorInds, sRange, N, veloRange, wavegridlog):
         CCFarr = np.array([self._CCF(np.copy(Observation),
                                (np.roll(Mask, s))[CrossCorInds],N) for s in sRange])
-
+        # print(f'CCFarr = {CCFarr}')
         IndMax  = np.argmax(CCFarr)
+        # print(f'IndMax = {IndMax}')
+        # print(f'veloRange = {veloRange}')
+        # print(f'CCFarr = {CCFarr}')
         vmax = veloRange[IndMax]
         CCFMAX1  = CCFarr[IndMax]
 
         # edges at fitfac·CCFMAX1
         LeftEdgeArr  = np.abs(self.Fit_Range_in_fraction*CCFMAX1 - CCFarr[:IndMax])
         RightEdgeArr = np.abs(self.Fit_Range_in_fraction*CCFMAX1 - CCFarr[IndMax+1:])
+        # if len(LeftEdgeArr) == 0 or len(RightEdgeArr) == 0:
+        #     print(f"Can't find local maximum in CCF for star {self.star_name}, epoch {self.epoch} line {self.line_tag}")
+        #     return np.array([None,None])
+        #
+        # LeftEdge = np.abs(Fit_range * CCFMAX1 - CCFAR[:IndMax])
+        # RightEdge = np.abs(Fit_range * CCFMAX1 - CCFAR[IndMax + 1:])
+
         if len(LeftEdgeArr) == 0 or len(RightEdgeArr) == 0:
             print("Can't find local maximum in CCF\n")
-            return np.array([np.nan, np.nan])
+            fig1, ax1 = plt.subplots()
+            ax1.plot(veloRange, CCFarr, color='C0', label=f'obs {self.star_name}')
+            # ax1.plot(wavegridlog[CrossCorInds], Observation, label='Observation', color='k', alpha=0.8)
+            # ax1.plot(wavegridlog, Mask - np.mean(Mask), label='Template (unshifted)', color='orchid', alpha=0.9)
+            # fig1.savefig(os.path.join(PathToOutput, f'ccf{self.star_name}.pdf'))
+            plt.show()
+            #plt.close(fig1)
+            return np.array([None, None, None, None])
+
         IndFit1 = np.argmin(LeftEdgeArr)
         IndFit2 = np.argmin(RightEdgeArr) + IndMax + 1
         a, b, c = np.polyfit(veloRange[IndFit1:IndFit2 + 1],
@@ -98,67 +116,78 @@ class CCFclass:
         parable = (a * FineVeloGrid ** 2 + b * FineVeloGrid + c)
         sigma = np.sqrt(-1. / (N * 2 * a * CCFAtMax / (1 - CCFAtMax ** 2)))
 
-        if self.PlotFirst is True or self.PlotAll is True:
-            # Radial Velocity and Error
-            RV = vmax  # Example Radial Velocity in km/s (replace with computed value)
-            RV_error = sigma  # Example error in km/s (replace with computed value)
-            star_name = self.star_name
-            epoch = self.epoch
 
-            # CCF Plot
+        if self.PlotFirst or self.PlotAll or self.savePlot:
+
+            # -------- 0.  Gather & format metadata --------------------------
+            RV = vmax
+            RV_error = sigma
+            star_name = getattr(self, "star_name", "unknown").strip()
+            epoch = getattr(self, "epoch", 0.0)  # e.g. MJD float
+            line_rng = self.CrossCorRangeA[0]  # first interval
+            line_tag = getattr(self, "line_tag", "")
+            line_txt = (f"{line_tag}  ({line_rng[0]:.0f}–{line_rng[1]:.0f} nm)"
+                        if line_tag else f"{line_rng[0]:.0f}–{line_rng[1]:.0f} nm")
+
+            # safe strings for filenames
+            clean_star = re.sub(r"[^A-Za-z0-9_-]", "_", star_name)
+            epoch_str = f"{epoch:.2f}"  # e.g. 60234.45
+            rv_tag = f"{RV:+.1f}".replace('+', 'p').replace('-', 'm')
+
+            # -------- 1.  CCF figure ----------------------------------------
             fig1, ax1 = plt.subplots(figsize=(10, 6))
-            ax1.plot(veloRange, CCFarr, color='C0', label='CCF')
-            ax1.plot(FineVeloGrid, parable, color='C1', linewidth=1.5, label='Fit (Parabola)')
-            ax1.set_title(f"CCF for {star_name} - Epoch: {epoch}", fontsize=14, weight='bold')
-            ax1.set_xlabel('Radial Velocity [km/s]', fontsize=12)
-            ax1.set_ylabel('Normalized CCF', fontsize=12)
-            ax1.axvline(RV, color='red', linestyle='--', alpha=0.7, label=f"RV = {RV:.4f} ± {RV_error:.4f} km/s")
-            ax1.legend(loc='best', fontsize=10)
-            ax1.grid(True, linestyle='--', alpha=0.5)
+            ax1.plot(veloRange, CCFarr, label='CCF', color='C0')
+            ax1.plot(FineVeloGrid, parable, label='Fit (parabola)', color='C1', lw=1.5)
+            ax1.axvline(RV, ls='--', color='r',
+                        label=f"RV = {RV:.2f} ± {RV_error:.2f} km/s")
 
-            # Annotating RV and error directly on the plot
-            ax1.annotate(f"RV = {RV:.2f} ± {RV_error:.2f} km/s",
-                         xy=(RV, np.max(CCFarr) * 0.9),
-                         xytext=(RV + 2, np.max(CCFarr) * 0.8),
-                         arrowprops=dict(facecolor='black', arrowstyle="->", lw=0.8),
-                         fontsize=10)
+            ax1.set_title(f"CCF  |  {star_name}  |  Epoch {epoch_str}  |  {line_txt}",
+                          fontsize=14, weight='bold')
+            ax1.set_xlabel('Radial Velocity [km/s]')
+            ax1.set_ylabel('Normalized CCF')
+            ax1.grid(ls='--', alpha=0.4)
+            ax1.legend()
+            plt.tight_layout()
+            if self.PlotFirst or self.PlotAll:
+                plt.show();
+            else:
+                plt.close(fig1)
 
-            # Save the plot with a meaningful name
-            cutname = f"{star_name}_{epoch}"
-            # fig1.savefig(f"CCFPlots/CCF_parabola_{cutname}.pdf")
-            plt.show()
-
-            # Spectrum and Template Plot
+            # -------- 2.  Spectrum vs template ------------------------------
             fig2, ax2 = plt.subplots(figsize=(10, 6))
-            ax2.plot(wavegridlog[CrossCorInds], Observation, color='k', label='Observation', alpha=0.8)
-            ax2.plot(wavegridlog, (Mask - np.mean(Mask)), color='orchid', label='Template (Unshifted)', alpha=0.9)
-            ax2.plot((wavegridlog * (1 + RV / clight)), (Mask - np.mean(Mask)), color='turquoise',
-                     label='Template (Shifted by RV)', alpha=0.9)
+            ax2.plot(wavegridlog[CrossCorInds], Observation, label='Observation', color='k', alpha=0.8)
+            ax2.plot(wavegridlog, Mask - np.mean(Mask), label='Template (unshifted)', color='orchid', alpha=0.9)
+            ax2.plot(wavegridlog * (1 + RV / clight), Mask - np.mean(Mask), label='Template (shifted)',
+                     color='turquoise', alpha=0.9)
 
-            ax2.set_title(f"Spectra for {star_name} - Epoch: {epoch}", fontsize=14, weight='bold')
-            ax2.set_xlabel(r'Wavelength [$\AA$]', fontsize=12)
-            ax2.set_ylabel("Normalized Flux", fontsize=12)
-            ax2.legend(loc='best', fontsize=10)
-            ax2.grid(True, linestyle='--', alpha=0.5)
+            ax2.set_title(f"Spectra  |  {star_name}  |  Epoch {epoch_str}  |  {line_txt}",
+                          fontsize=14, weight='bold')
+            ax2.set_xlabel(r'Wavelength [nm]')
+            ax2.set_ylabel('Normalized Flux')
+            ax2.grid(ls='--', alpha=0.4)
+            ax2.legend()
+            plt.tight_layout()
 
-            # Emphasizing RV shift on wavelength grid
-            # ax2.annotate(f"Wavelength Shift by RV = {RV:.2f} km/s",
-            #              xy=(wavegridlog[-100], np.min(Mask) * 1.1),
-            #              xytext=(wavegridlog[-300], np.min(Mask) * 1.2),
-            #              arrowprops=dict(facecolor='blue', arrowstyle="->", lw=0.8),
-            #              fontsize=10, color='blue')
+            # -------- 3.  Optional saving -----------------------------------
+            if getattr(self, "savePlot", False):
+                ts_str = self.run_ts
+                out_dir = Path("../output") / clean_star / "CCF" / ts_str / line_tag
+                out_dir.mkdir(parents=True, exist_ok=True)
 
-            # Save the plot with a meaningful name
-            # fig2.savefig(f"SpectraPlots/Spectra_{cutname}.pdf")
-            plt.show()
+                fig1.savefig(out_dir / f"{clean_star}_MJD{epoch_str}_RV{rv_tag}_CCF.png", dpi=150)
+                fig2.savefig(out_dir / f"{clean_star}_MJD{epoch_str}_RV{rv_tag}_SPEC.png", dpi=150)
+                print(f"[saved] plots to {out_dir}")
 
-            # Turn off PlotFirst after plotting
+            if self.PlotFirst or self.PlotAll:
+                plt.show();
+            else:
+                plt.close(fig2)
             self.PlotFirst = False
 
         if CCFAtMax > 1:
             print("Failed to cross-correlate: template probably sucks!")
             print("Check cross-correlation function + parable fit.")
-            return np.nan, np.nan
+            return None, None
     
         CFFdvdvAtMax = 2*a
         return np.array([vmax, np.sqrt(-1./(N * CFFdvdvAtMax *
@@ -211,7 +240,8 @@ class CCFclass:
         MaskAll = np.array([tpl_wave, tpl_flux]).T
         Mask = interp1d(MaskAll[:, 0], np.nan_to_num(MaskAll[:, 1]), bounds_error=False,
                         fill_value=1., kind=self.intr_kind)(wavegridlog)
-
+        # print(f'plotting new mask')
+        # plt.plot(wavegridlog, Mask, 'k')
         flux = interp1d(obs_wave, np.nan_to_num(
             obs_flux), bounds_error=False, fill_value=1.,
                           kind='cubic')(wavegridlog[CrossCorInds])
@@ -237,6 +267,7 @@ class CCFclass:
         # --- first pass -------------------------------------------------
         # --- first pass: RVs + per‑spectrum S/N from the CCF window ----------
         r1, S2N = [], []
+        print(f'Calculating for first time to get shifts and create the coadded template')
         for w, f in obs_list:
             rv, sig = self.compute_RV(w, f, tpl_wave, tpl_flux)
             r1.append((rv, sig))
@@ -248,21 +279,39 @@ class CCFclass:
                 if m.any():
                     noises.append(np.std(f[m]))
             # fallback: if none of the ranges overlap this spectrum
-            noise = np.mean(noises) if noises else np.std(f)
+            noise = np.mean(noises)
             S2N.append(1.0 / noise if noise > 0 else 1.0)
 
         S2N = np.asarray(S2N)
 
         # --- co-add in rest frame --------------------------------------
-        w_common = obs_list[0][0]
+        w_common = obs_list[0][0]*10 if self.nm else obs_list[0][0]
         coadd = np.zeros_like(w_common)
         weights = (S2N**2) / np.sum(S2N**2)
+        # print(f'weights = {weights}')
+        # Iterate over observation list, radial velocities, and weights
+        print(f'Now calculating coadded template')
         for (w, f), (rv, _), wgt in zip(obs_list, r1, weights):
-            shifted = interp1d(w*(1-rv/clight), f, kind=self.intr_kind,
+            if rv is None:
+                print(f"Check out star {self.star_name}, epoch {self.epoch} line {self.line_tag}")
+                continue
+
+            # print(f'rv is {rv}, wgt is {wgt} for epoch {self.epoch}')
+            # print(f'f is {f}, w is {w}')
+            # Perform wavelength shift and interpolation
+            try:
+                shifted = interp1d(w * (1 - rv / clight), f, kind=self.intr_kind,
                                bounds_error=False, fill_value=1.0)(w_common)
+            except:
+                print(f'what failed is:')
+                print(f'rv: {rv}')
+                print(f'w: {w * (1 - rv / clight)}')
+                print(f'f: {shifted}')
             coadd += wgt * shifted
 
-        # --- second pass ----------------------------------------------
+            # --- second pass ----------------------------------------------
+        # print(f'coadd is {coadd}')
+        print(f'Finally calculating CCF using coadded template')
         r2 = [self.compute_RV(w, f, w_common, coadd) for w, f in obs_list]
 
         return (r1, r2, (w_common, coadd)) if return_coadd else (r1, r2)
