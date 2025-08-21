@@ -516,7 +516,7 @@ class Star:
             list: A list of band names.
         """
         bands = ['NIR','VIS','UVB','COMBINED']
-        bands = ['NIR','VIS','UVB','COMBINED2']
+        # bands = ['NIR','VIS','UVB','COMBINED2']
         return list(bands)
 
     
@@ -827,7 +827,7 @@ class Star:
 
 ########################################                 Plots                      ########################################
     
-    def plot_spectra(self, epoch_nums=None, bands=None, save=False, linewidth = 1.5, scatter = False):
+    def plot_spectra_old(self, epoch_nums=None, bands=None, save=False, linewidth = 1.5, scatter = False):
         """
         Plots flux vs. wavelength from the FITS files for the specified epochs and bands.
 
@@ -917,6 +917,278 @@ class Star:
         plt.show()
 
 ########################################                                       ########################################
+
+    def plot_spectra(
+            self,
+            epoch_nums=None,
+            bands=None,
+            save=False,
+            linewidth=1.5,
+            scatter=False,
+            normalize=False,
+            Rest_frame=False,
+    ):
+        """
+        Plot flux vs. wavelength for selected epochs and bands.
+
+        Flags:
+          - normalize: if True, use 'norm_anchor_wavelengths' from COMBINED to build a
+            piecewise-linear pseudo-continuum and divide the spectrum by it.
+          - Rest_frame: if True, add each epoch's RV to the legend. If normalize=True,
+            also shift the anchor points into a common velocity frame before interpolation.
+
+        Notes:
+          - Anchors and RVs are loaded via self.load_property(..., ep, 'COMBINED').
+          - If RVs contain multiple lines, the mean full_RV across available lines is used.
+        """
+        import os
+        import numpy as np
+        import matplotlib.pyplot as plt
+        from datetime import datetime
+        from itertools import product
+
+        c_kms = 299792.458  # km/s
+
+        # ---- helpers -----------------------------------------------------------
+        def _coerce_anchors(obj):
+            """Accept array-like or dict-like and return a clean, sorted 1D array (nm)."""
+            if obj is None:
+                return None
+            cand = None
+            if isinstance(obj, dict):
+                for k in ("wavelengths", "anchors", "norm_anchor_wavelengths", "lambda", "lam"):
+                    if k in obj:
+                        cand = obj[k]
+                        break
+            else:
+                cand = obj
+            if cand is None:
+                return None
+            arr = np.asarray(cand, dtype=float).ravel()
+            arr = arr[np.isfinite(arr)]
+            arr = np.unique(arr)
+            return arr if arr.size >= 2 else None
+
+        def _extract_full_rvs_from_dict(rv_dict):
+            """From a dict of {line: structure}, pull full_RV values and average them."""
+            vals = []
+            for v in rv_dict.values():
+                try:
+                    v = v.item()
+                except Exception:
+                    pass
+                if isinstance(v, dict) and "full_RV" in v:
+                    try:
+                        vals.append(float(v["full_RV"]))
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        vals.append(float(v))
+                    except Exception:
+                        pass
+            if vals:
+                return float(np.nanmean(vals))
+            return None
+
+        def _get_epoch_rv(ep):
+            """Load COMBINED RVs for an epoch and return a single representative RV (km/s)."""
+            try:
+                rvs_prop = self.load_property("RVs", ep, "COMBINED")
+            except Exception:
+                rvs_prop = None
+            if rvs_prop is None:
+                return None
+            if isinstance(rvs_prop, dict):
+                for k in ("global", "combined", "CCF", "median"):
+                    if k in rvs_prop:
+                        try:
+                            val = rvs_prop[k]
+                            try:
+                                val = val.item()
+                            except Exception:
+                                pass
+                            if isinstance(val, dict) and "full_RV" in val:
+                                return float(val["full_RV"])
+                            return float(val)
+                        except Exception:
+                            pass
+                return _extract_full_rvs_from_dict(rvs_prop)
+            try:
+                return float(rvs_prop)
+            except Exception:
+                return None
+
+        def _get_epoch_anchors(ep):
+            """Load COMBINED norm_anchor_wavelengths (nm) for an epoch."""
+            try:
+                anchors_prop = self.load_property("norm_anchor_wavelengths", ep, "COMBINED")
+            except Exception:
+                anchors_prop = None
+            return _coerce_anchors(anchors_prop)
+
+        # ---- select epochs & bands --------------------------------------------
+        if epoch_nums is None:
+            epoch_nums = self.get_all_epoch_numbers()
+        elif not isinstance(epoch_nums, list):
+            epoch_nums = [epoch_nums]
+
+        if bands is None:
+            bands = self.get_all_bands()
+        elif not isinstance(bands, list):
+            bands = [bands]
+
+        combinations = list(product(epoch_nums, bands))
+        single_plot = len(combinations) == 1
+
+        # ---- prefetch RVs (for legend and, if normalize, for rest-frame anchors) ----
+        rv_by_epoch = {}
+        rv_ref = None
+        if Rest_frame:
+            for ep in epoch_nums:
+                rv_by_epoch[ep] =  self.load_property("RVs", ep, "COMBINED")['C IV 5808-5812'].item()['full_RV']
+            rv_vals = [v for v in rv_by_epoch.values() if v is not None and np.isfinite(v)]
+            rv_ref = float(np.mean(rv_vals)) if rv_vals else 0.0
+
+        # ---- prefetch anchors if needed ----------------------------------------
+        anchors_by_epoch = {}
+        if normalize:
+            for ep in epoch_nums:
+                anchors_by_epoch[ep] = _get_epoch_anchors(ep)
+
+        # ---- prepare colors: distinct colors for COMBINED per epoch ------------
+        combined_epochs = sorted({ep for ep, b in combinations if b == "COMBINED"})
+        # obtain matplotlib's default color cycle
+        prop_cycle = plt.rcParams.get("axes.prop_cycle", None)
+        palette = []
+        if prop_cycle is not None:
+            try:
+                palette = prop_cycle.by_key().get("color", [])
+            except Exception:
+                palette = []
+        if not palette:
+            palette = [f"C{i}" for i in range(10)]
+        combined_color_map = {ep: palette[i % len(palette)] for i, ep in enumerate(combined_epochs)}
+
+        # ---- plot --------------------------------------------------------------
+        plt.figure(figsize=(10, 6))
+
+        for epoch_num, band in combinations:
+            fits_file = None
+            try:
+                # Load the raw spectra from FITS
+                fits_file = self.load_observation(epoch_num, band=band)
+                data = fits_file.data
+                wavelength = np.asarray(data["WAVE"][0], dtype=float)  # nm
+                flux = np.asarray(data["FLUX"][0], dtype=float)
+
+                # --- normalization using COMBINED anchors -----------------------
+                if normalize:
+                    anchors = anchors_by_epoch.get(epoch_num)
+                    if anchors is None:
+                        # optional fallback: try anchors saved with this band
+                        try:
+                            alt_prop = self.load_property("norm_anchor_wavelengths", epoch_num, band)
+                        except Exception:
+                            alt_prop = None
+                        anchors = _coerce_anchors(alt_prop)
+
+                    if anchors is not None and anchors.size >= 2:
+                        # Shift anchors to a common velocity frame if requested
+                        use_anchors = anchors
+                        if Rest_frame:
+                            rv_ep = rv_by_epoch.get(epoch_num, None)
+                            if rv_ep is not None and np.isfinite(rv_ep):
+                                rest_anchors = anchors / (1.0 + rv_ref / c_kms)
+                                use_anchors = rest_anchors * (1.0 + rv_ep / c_kms)
+
+                        # Keep only anchors inside the spectral coverage
+                        in_band = (use_anchors >= np.nanmin(wavelength)) & (use_anchors <= np.nanmax(wavelength))
+                        use_anchors = np.unique(use_anchors[in_band])
+
+                        if use_anchors.size >= 2:
+                            # Evaluate flux at anchor wavelengths
+                            flux_at_anchors = np.interp(use_anchors, wavelength, flux)
+                            # Linear continuum across the whole wavelength grid
+                            continuum = np.interp(wavelength, use_anchors, flux_at_anchors)
+                            good = np.isfinite(continuum) & (continuum > 0)
+                            if np.any(good):
+                                tmp = np.full_like(flux, np.nan, dtype=float)
+                                tmp[good] = flux[good] / continuum[good]
+                                flux = tmp
+                            else:
+                                print(
+                                    f"[warn] Epoch {epoch_num}, Band {band}: continuum invalid; skipping normalization.")
+                        else:
+                            print(
+                                f"[warn] Epoch {epoch_num}, Band {band}: <2 anchors within coverage; skipping normalization.")
+                    else:
+                        print(
+                            f"[warn] Epoch {epoch_num}, Band {band}: no COMBINED 'norm_anchor_wavelengths'; skipping normalization.")
+
+                # --- choose color ------------------------------------------------
+                if band == "COMBINED":
+                    color = combined_color_map.get(epoch_num, None)  # distinct per epoch
+                elif band == "UVB":
+                    color = "blue"
+                elif band == "VIS":
+                    color = "green"
+                elif band == "NIR":
+                    color = "red"
+                else:
+                    color = None  # let mpl choose
+
+                # --- build label (include RV if requested) ----------------------
+                rv_suffix = ""
+                if Rest_frame:
+                    rv_val = rv_by_epoch.get(epoch_num, None)
+                    if rv_val is None or not np.isfinite(rv_val):
+                        rv_suffix = " (RV=NA)"
+                    else:
+                        rv_suffix = f" (RV={rv_val:+.1f} km/s)"
+                label = f"Epoch {epoch_num}, Band {band}{rv_suffix}"
+
+                # --- plot -------------------------------------------------------
+                if scatter:
+                    plt.scatter(wavelength, flux, label=label, linewidth=linewidth,
+                                s=max(1.0, 10.0 - 2.0 * linewidth), color=color)
+                else:
+                    plt.plot(wavelength, flux, label=label, linewidth=linewidth, color=color)
+
+            except Exception as e:
+                print(f"Error reading FITS file '{fits_file}': {e}")
+                continue
+
+        # ---- cosmetics & save --------------------------------------------------
+        plt.xlabel("Wavelength [nm]")
+        if normalize:
+            plt.ylabel("Normalized flux (F/Fc)")
+        else:
+            plt.ylabel(r"Flux [$\mathrm{erg}\ \mathrm{cm}^{-2}\ \mathrm{s}^{-1}\ \mathrm{\AA}^{-1}$]")
+        title = f"Spectrum of {self.star_name}"
+        if Rest_frame and rv_ref is not None:
+            title += f"  (Ref RV = {rv_ref:+.1f} km/s)"
+        plt.title(title)
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+
+        if save:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            if single_plot:
+                ep0, b0 = combinations[0]
+                outdir = os.path.join(self.data_dir, self.star_name, f"epoch{ep0}", b0, "output", "Figures")
+            else:
+                outdir = os.path.join(self.data_dir, self.star_name, "output", "Figures")
+            os.makedirs(outdir, exist_ok=True)
+            fname = f"{self.star_name}_{timestamp}.png"
+            path = os.path.join(outdir, fname)
+            plt.savefig(path, dpi=200)
+            print(f"Figure saved to '{path}'")
+
+        plt.show()
+
+    ########################################                                       ########################################
     
     def plot_spectra_errors(self, epoch_nums=None, bands=None, save=False):
         """
@@ -1135,9 +1407,9 @@ class Star:
                           entry['wl'].min(), entry['wl'].max(),
                           linestyles='--', colors='gray', linewidth=0.8)
 
-            ax.set_xlabel('Wavelength [nm]',fontsize=20)
-            ax.set_ylabel('Normalized Flux',fontsize=20)
-            ax.set_title(f"{self.star_name} — Bands: {', '.join(bands)}",fontsize=20)
+            ax.set_xlabel('Wavelength [nm]')
+            ax.set_ylabel('Normalized Flux')
+            ax.set_title(f"{self.star_name} — Bands: {', '.join(bands)}",fontsize=10)
             ax.legend(fontsize='small', ncol=2)
             ax.grid(True)
             fig.canvas.draw_idle()
@@ -1170,25 +1442,19 @@ class Star:
             plt.savefig(os.path.join(outdir, fname))
             print(f"Saved figure to: {outdir}/{fname}")
 
-        plt.rcParams.update({
-            'font.size':12,  # general font size
-            'axes.titlesize': 12,  # title font size
-            'axes.labelsize': 12,  # x and y labels
-            'xtick.labelsize': 12,  # x-axis tick labels
-            'ytick.labelsize': 12,  # y-axis tick labels
-            'legend.fontsize': 12,  # legend font size
-            'figure.titlesize': 12  # figure title font size
-        })
+        # plt.rcParams.update({
+        #     'font.size':12,  # general font size
+        #     'axes.titlesize': 12,  # title font size
+        #     'axes.labelsize': 12,  # x and y labels
+        #     'xtick.labelsize': 12,  # x-axis tick labels
+        #     'ytick.labelsize': 12,  # y-axis tick labels
+        #     'legend.fontsize': 12,  # legend font size
+        #     'figure.titlesize': 12  # figure title font size
+        # })
 
         plt.show()
 
     ########################################                                       ########################################
-
-    import os
-    import numpy as np
-    import matplotlib.pyplot as plt
-    import re
-    from datetime import datetime
 
     def plot_extreme_rv_spectra(self,
                                 emission_line,
@@ -1199,23 +1465,156 @@ class Star:
                                 scatter=False,
                                 ts=None,
                                 to_plot=False,
-                                models=None):
+                                models=None,
+                                correct_lmc=False,
+                                lmc_rv_kms=262.2,
+                                auto_annotate=True,  # turn on automatic labeling
+                                species_filter=("H I", "He I", "He II", "C III", "C IV", "O V", "N III"),
+                                match_to_peaks=False,  # only label lines that align with detected peaks
+                                peak_prominence=0.03,  # tweak for your S/N; used if match_to_peaks=True
+                                max_label_per_100A=6,  # de-clutter throttle
+                                ):
         """
-        Identify the epochs with the lowest and highest radial velocities in the specified band
-        and plot their combined spectra together, optionally over-plotting model templates.
-
-        Identify the epochs with the lowest and highest radial velocities in the specified band
-        (using all available epochs) and plot their combined spectra together.
-
-        Parameters:
-            band (str): Which band to load—defaults to 'COMBINE'.
-            save (bool): If True, save the figure (to data_dir/star_name/output/Figures).
-            linewidth (float): Line width for the lines/scatter points.
-            scatter (bool): If True, uses scatter instead of line plot.
-            model (list of str): file paths to your .dat template spectra (wavelength [Å], flux).
-
-        All observed spectra are converted from nm to Å for the plot.
+        ...
+        correct_lmc (bool): If True, shift wavelengths to the LMC rest frame by
+            removing the LMC systemic heliocentric radial velocity (default 262.2 km/s).
+        lmc_rv_kms (float): LMC systemic radial velocity in km/s. Defaults to 262.2.
         """
+
+        import importlib
+        from math import sqrt
+        import numpy as np
+
+        def _get_default_wr_lines():
+            # Curated (Å, rest) — lean list for WC + H/He work; expand as you wish
+            return [
+                ("He II 4200", 4199.83), ("Hγ", 4340.47), ("He II 4542", 4541.59),
+                ("C III 4650", 4650.0), ("He II 4686", 4685.68), ("Hβ", 4861.33),
+                ("He I 4922", 4921.93), ("O V 5590", 5590.0), ("C III 5696", 5696.0),
+                ("C IV 5801", 5801.33), ("C IV 5812", 5812.02), ("He I 5876", 5875.62),
+                ("N III 4640", 4640.64), ("Hα", 6562.80)
+            ]
+
+        def _load_lines_via_linetools(species_filter):
+            try:
+                if not importlib.util.find_spec("linetools"):
+                    return None
+                from linetools.lists.linelist import LineList
+                # 'ISM' is broad; covers H/He/metals in optical reasonably well
+                ll = LineList('ISM')
+                df = ll._data  # structured array
+                # Build (name, wrest Å) tuples filtered by species
+                out = []
+                for row in df:
+                    name = str(row['name'])
+                    lam = float(row['wrest'])
+                    # crude species pick on leading token
+                    sp = name.split()[0]
+                    if species_filter and (sp not in species_filter):
+                        continue
+                    out.append((name, lam))
+                return out if out else None
+            except Exception:
+                return None
+
+        def _gather_line_list(species_filter):
+            lines = _load_lines_via_linetools(species_filter)
+            if (lines is None) or (len(lines) == 0):
+                lines = _get_default_wr_lines()
+                # If user passed a filter, apply to the default set
+                if species_filter:
+                    keep = []
+                    for name, lam in lines:
+                        sp = name.split()[0]  # "He", "C", "H", "N", "O"
+                        # normalize to "H I", "He II", etc. for a loose check
+                        if any(sp in s for s in species_filter):
+                            keep.append((name, lam))
+                    lines = keep or lines
+            # de-duplicate by wavelength
+            seen = set();
+            uniq = []
+            for name, lam in sorted(lines, key=lambda x: x[1]):
+                if abs(lam - next(iter(seen), lam + 1e6)) > 1e-3:
+                    uniq.append((name, lam))
+                seen.add(lam)
+            return uniq
+
+        def _observed_factor(correct_lmc, lmc_rv_kms):
+            c = 299_792.458
+            return 1.0 if correct_lmc else (1.0 + lmc_rv_kms / c)
+
+        def _find_emission_peaks(wave, flux, prom):
+            # very light-weight peak picker without scipy dependency
+            f = np.asarray(flux)
+            w = np.asarray(wave)
+            # local maxima
+            m = (f[1:-1] > f[:-2]) & (f[1:-1] > f[2:])
+            idx = np.where(m)[0] + 1
+            if prom is not None and prom > 0:
+                baseline = np.median(f)
+                idx = idx[(f[idx] - baseline) >= prom]
+            return w[idx]
+
+        def _throttle_labels(lines_sorted, per_100A):
+            if per_100A <= 0:
+                return lines_sorted
+            keep = []
+            last_bin_start = None
+            count_in_bin = 0
+            for name, lam in lines_sorted:
+                bin_start = int(lam // 100) * 100
+                if bin_start != last_bin_start:
+                    last_bin_start = bin_start
+                    count_in_bin = 0
+                if count_in_bin < per_100A:
+                    keep.append((name, lam))
+                    count_in_bin += 1
+            return keep
+
+        def _annotate_lines_auto(ax, lines_rest, wl_min, wl_max,
+                                 correct_lmc, lmc_rv_kms,
+                                 match_to_peaks, peak_prominence,
+                                 max_label_per_100A):
+            # shift to plotting frame
+            factor = _observed_factor(correct_lmc, lmc_rv_kms)
+            lines_obs = [(name, lam * factor) for name, lam in lines_rest]
+
+            # crop to the current x-range from the data
+            xmin = float(np.min([wl_min.min(), wl_max.min()]))
+            xmax = float(np.max([wl_min.max(), wl_max.max()]))
+            in_range = [(n, l) for (n, l) in lines_obs if xmin <= l <= xmax]
+
+            # Optionally require a nearby peak (helps avoid clutter if many lines)
+            if match_to_peaks:
+                # use the more-featured spectrum (max epoch) to find peaks
+                peaks = _find_emission_peaks(wl_max, fl_max, prom=peak_prominence)
+                c = 299_792.458
+                max_dv = 200.0  # km/s tolerance for a match
+                keep = []
+                for name, lam in in_range:
+                    # convert to dv from nearest peak
+                    if peaks.size == 0:
+                        continue
+                    dv = np.min(np.abs((peaks - lam) / lam) * c)
+                    if dv <= max_dv:
+                        keep.append((name, lam))
+                in_range = keep
+
+            # throttle density
+            in_range = _throttle_labels(sorted(in_range, key=lambda x: x[1]),
+                                        per_100A=max_label_per_100A)
+
+            # draw with minimal overlap: stack small y-offsets when too close
+            ytop = ax.get_ylim()[1]
+            used_x = []
+            for name, lam in in_range:
+                ax.axvline(lam, linestyle=':', linewidth=0.9, alpha=0.8)
+                # avoid overlapping texts: if another label within 6 Å, offset
+                y = ytop * 0.96
+                if any(abs(lam - x0) < 6.0 for x0 in used_x):
+                    y = ytop * 0.90
+                ax.text(lam, y, name, rotation=90, va='top', ha='center', fontsize=8)
+                used_x.append(lam)
 
         # ─── Get all epochs ─────────────────────────────────────────
         epoch_nums = self.get_all_epoch_numbers()
@@ -1243,39 +1642,51 @@ class Star:
         # ─── Load spectra ────────────────────────────────────────────
         def _load(ep):
             norm_flux = self.load_property('cleaned_normalized_flux', ep, band)
-            if norm_flux is None:
+            if norm_flux is not None:
+                tag = 'cleaned'
+            else:
                 norm_flux = self.load_property('normalized_flux', ep, band)
+                tag = 'orig'
             wave_nm = norm_flux['wavelengths']  # in nm
             flux = norm_flux['normalized_flux']
-            return wave_nm * 10.0, flux  # convert to Å
+            return wave_nm * 10.0, flux, tag  # convert to Å, return tag
 
-        wl_min, fl_min = _load(min_ep)
-        wl_max, fl_max = _load(max_ep)
+        wl_min, fl_min, tag_min = _load(min_ep)
+        wl_max, fl_max, tag_max = _load(max_ep)
+
+        # ─── Optional: correct for LMC systemic Doppler shift ────────
+        if correct_lmc:
+            c_kms = 299_792.458  # speed of light in km/s
+            doppler_factor = 1.0 + (lmc_rv_kms / c_kms)  # non-relativistic λ_obs = λ_rest*(1+v/c)
+            wl_min = wl_min / doppler_factor
+            wl_max = wl_max / doppler_factor
 
         # ─── Plot ───────────────────────────────────────────────────
         plt.figure(figsize=(10, 6))
 
         if scatter:
             plt.scatter(wl_min, fl_min,
-                        label=f'Epoch {min_ep} (RV={min_rv:.1f} km/s)',
+                        label=f'Epoch {min_ep} (RV={min_rv:.1f} km/s, {tag_min})',
                         linewidth=linewidth)
             plt.scatter(wl_max, fl_max,
-                        label=f'Epoch {max_ep} (RV={max_rv:.1f} km/s)',
+                        label=f'Epoch {max_ep} (RV={max_rv:.1f} km/s, {tag_max})',
                         linewidth=linewidth)
         else:
             plt.plot(wl_min, fl_min,
-                     label=f'Epoch {min_ep} (RV={min_rv:.1f} km/s)',
+                     label=f'Epoch {min_ep} (RV={min_rv:.1f} km/s, {tag_min})',
                      linewidth=linewidth, color='blue')
             plt.plot(wl_max, fl_max,
-                     label=f'Epoch {max_ep} (RV={max_rv:.1f} km/s)',
+                     label=f'Epoch {max_ep} (RV={max_rv:.1f} km/s, {tag_max})',
                      linewidth=linewidth, color='red')
 
-        # ─── Overplot model models if requested ──────────────────
+        # ─── Overplot model templates if requested ───────────────────
         if models:
             for tpl in models:
                 try:
                     tpl = f'Data/Models_for_Guy/' + tpl
                     model_wave, model_flux = np.loadtxt(tpl, unpack=True)
+                    # If correcting to LMC frame, apply same correction to models only if they are in observed frame.
+                    # Most templates are rest-frame; so by default do NOT shift model axes.
                     plt.plot(model_wave, model_flux,
                              label=os.path.basename(tpl),
                              linestyle='--',
@@ -1283,23 +1694,30 @@ class Star:
                 except Exception as e:
                     print(f"Warning: could not load template '{tpl}': {e}")
 
-        plt.xlabel('Wavelength [Å]')
+        plt.xlabel('Wavelength [Å]' + (' (LMC rest frame)' if correct_lmc else ''))
         plt.ylabel('Normalized Flux')
         plt.title(f'{self.star_name}: Extreme RV Spectra ({emission_line})')
         plt.legend(fontsize='small', loc='best')
         plt.grid(True)
         plt.tight_layout()
 
+        if auto_annotate:
+            lines_rest = _gather_line_list(species_filter)
+            ax = plt.gca()
+            _annotate_lines_auto(ax, lines_rest,
+                                 wl_min, wl_max,
+                                 correct_lmc, lmc_rv_kms,
+                                 match_to_peaks, peak_prominence,
+                                 max_label_per_100A)
+
         # ─── Zoom on line if requested ──────────────────────────────
         if save and emission_lines:
             xmin, xmax = emission_lines[emission_line]
-            # already in Å now
             width = xmax - xmin
             x_low = xmin - 0.1 * width
             x_high = xmax + 0.1 * width
             plt.xlim(x_low, x_high)
 
-            # set y‐limits from data in window
             m1 = (wl_min >= x_low) & (wl_min <= x_high)
             m2 = (wl_max >= x_low) & (wl_max <= x_high)
             flux_window = np.concatenate([fl_min[m1], fl_max[m2]])
@@ -1323,124 +1741,6 @@ class Star:
             plt.show()
         else:
             plt.close()
-
-    ########################################                                       ########################################
-
-    def plot_extreme_rv_spectra_old(self,
-                                emission_line,
-                                emission_lines = {},
-                                band='COMBINED',
-                                save=False,
-                                linewidth=1.5,
-                                scatter=False,
-                                ts = None,
-                                to_plot = False):
-        """
-        Identify the epochs with the lowest and highest radial velocities in the specified band
-        (using all available epochs) and plot their combined spectra together.
-
-        Parameters:
-            band (str): Which band to load—defaults to 'COMBINE'.
-            save (bool): If True, save the figure (to data_dir/star_name/output/Figures).
-            linewidth (float): Line width for the lines/scatter points.
-            scatter (bool): If True, uses scatter instead of line plot.
-        """
-        # ─── Get all epochs ─────────────────────────────────────────
-        epoch_nums = self.get_all_epoch_numbers()
-
-        # ─── Gather RVs ─────────────────────────────────────────────
-        rvs = {}
-        for ep in epoch_nums:
-            # try loading as a stored property...
-            rv = None
-            try:
-                RVs = self.load_property('RVs', ep, band)
-                rv = RVs[emission_line].item()['full_RV']
-            except Exception as e:
-                print(e)
-            if rv is not None:
-                rvs[ep] = rv
-
-        if not rvs:
-            print(f"No radial velocities found for band '{band}'.")
-            return
-
-        # ─── Find extremes ───────────────────────────────────────────
-        min_ep = min(rvs, key=rvs.get)
-        max_ep = max(rvs, key=rvs.get)
-        min_rv, max_rv = rvs[min_ep], rvs[max_ep]
-
-        # ─── Load spectra ────────────────────────────────────────────
-        def _load(ep):
-            norm_flux = self.load_property('cleaned_normalized_flux', ep, band)
-            # print(norm_flux)
-            if norm_flux is None:
-                norm_flux = self.load_property('normalized_flux', ep, band)
-            wave = norm_flux['wavelengths']
-            flux = norm_flux['normalized_flux']
-            print(wave, flux)
-            return wave, flux
-
-        wl_min, fl_min = _load(min_ep)
-        wl_max, fl_max = _load(max_ep)
-
-        # ─── Plot ───────────────────────────────────────────────────
-        plt.figure(figsize=(10, 6))
-        if scatter:
-            plt.scatter(wl_min, fl_min,
-                        label=f'Epoch {min_ep} (RV={min_rv:.2f})',
-                        linewidth=linewidth)
-            plt.scatter(wl_max, fl_max,
-                        label=f'Epoch {max_ep} (RV={max_rv:.2f})',
-                        linewidth=linewidth)
-        else:
-            plt.plot(wl_min, fl_min,
-                     label=f'Epoch {min_ep} (RV={min_rv:.2f})',
-                     linewidth=linewidth, color='blue')
-            plt.plot(wl_max, fl_max,
-                     label=f'Epoch {max_ep} (RV={max_rv:.2f})',
-                     linewidth=linewidth, color='red')
-
-        plt.xlabel('Wavelength [nm]')
-        plt.ylabel(r'Normalized Flux')
-        plt.title(f'{self.star_name}: Extreme RV Spectra ({emission_lines})')
-        plt.legend()
-        plt.grid(True)
-        plt.tight_layout()
-
-        if save:
-            print('wtf')
-            if ts == None:
-                ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-
-            if emission_lines:
-                xmin,xmax = emission_lines[emission_line]
-                width = xmax - xmin
-                x_low = xmin - 0.1 * width
-                x_high = xmax + 0.1 * width
-
-                # apply zoom
-                plt.xlim(x_low, x_high)
-                # compute y‐limits from the two spectra in that x‐range
-                m1 = (wl_min >= x_low) & (wl_min <= x_high)
-                m2 = (wl_max >= x_low) & (wl_max <= x_high)
-                flux_window = np.concatenate([fl_min[m1], fl_max[m2]])
-                y_min, y_max = flux_window.min(), flux_window.max()
-                pad = 0.05 * (y_max - y_min)  # 5% vertical padding
-
-                # set y‐limits
-                plt.ylim(y_min - pad, y_max + pad)
-
-            outdir = os.path.join('../output', re.sub(r"[^A-Za-z0-9_-]", "_", self.star_name), 'CCF', ts, emission_line)
-            os.makedirs(outdir, exist_ok=True)
-            fname = f"{self.star_name}_{emission_line}_extremeRV.png"
-            path = os.path.join(outdir, fname)
-            plt.savefig(path)
-            print(f"Saved {emission_line} plot to {path}")
-
-        if to_plot:
-            plt.show()
-        # plt.clf()
 
     ########################################                                       ########################################
 
