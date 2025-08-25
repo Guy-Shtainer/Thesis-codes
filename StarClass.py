@@ -1651,20 +1651,62 @@ class Star:
 
         wl_min, fl_min, tag_min = _load(min_ep)
         wl_max, fl_max, tag_max = _load(max_ep)
-        if even_emission_line:
-            # plt.plot(wl_min, fl_min, 'k', label='emission line')
-            max_max = np.max(fl_max[(5700 < wl_max) & (wl_max < 5900)])
-            print(f'max_max is {max_max}')
 
-            max_min = np.max(fl_min[(5700 < wl_min) & (wl_min < 5900)])
-            print(f'max_min is {max_min}')
-            if  max_max > max_min:
-                print('max_max is bigger')
-                fl_min = (fl_min - 1)*(max_max/max_min) + 1
-                # fl_min = (fl_min ) * (max_max / max_min)
+
+        # ─── Optional: compute default scaling (blue→red) ──────────
+        def _default_scale_factor(wl_a, fl_a, wl_b, fl_b, line_window=None):
+            """
+            Scale fl_a to fl_b: returns factor f for y' = 1 + (y-1)*f.
+            Uses the max above continuum ~1.0 in the chosen window.
+            Falls back to robust 95th-percentile if needed.
+            """
+            # overlap/window mask
+            if line_window is not None:
+                x0, x1 = line_window
+                mask_a = (wl_a >= x0) & (wl_a <= x1)
+                mask_b = (wl_b >= x0) & (wl_b <= x1)
             else:
-                fl_max = (fl_max - 1)*(max_min/max_max) + 1
-                print('max_max is smaller')
+                x0 = max(wl_a.min(), wl_b.min())
+                x1 = min(wl_a.max(), wl_b.max())
+                mask_a = (wl_a >= x0) & (wl_a <= x1)
+                mask_b = (wl_b >= x0) & (wl_b <= x1)
+
+            if mask_a.sum() < 10 or mask_b.sum() < 10:
+                return 1.0
+
+            seg_a = fl_a[mask_a]
+            seg_b = fl_b[mask_b]
+
+            # focus on emission above continuum ~1
+            elev_a = seg_a - 1.0
+            elev_b = seg_b - 1.0
+
+            # use robust peak estimate
+            try:
+                peak_a = np.nanmax(elev_a)
+                peak_b = np.nanmax(elev_b)
+                if (peak_a <= 0) or (peak_b <= 0):
+                    raise ValueError
+            except Exception:
+                qa = np.nanpercentile(elev_a, 95)
+                qb = np.nanpercentile(elev_b, 95)
+                peak_a = max(qa, 1e-3)
+                peak_b = max(qb, 1e-3)
+
+            return float(peak_b / peak_a)
+
+        # Decide the window: use emission_lines dict if available
+        line_window = None
+        if emission_lines and (emission_line in emission_lines):
+            line_window = emission_lines[emission_line]
+
+        # Compute default factor to scale blue (min epoch) to red (max epoch)
+        default_scale = 1.0
+        if even_emission_line:
+            default_scale = _default_scale_factor(wl_min, fl_min, wl_max, fl_max, line_window)
+            # apply once so the first draw looks right
+            fl_min = 1.0 + (fl_min - 1.0) * default_scale
+
 
         # ─── Optional: correct for LMC systemic Doppler shift ────────
         if correct_lmc:
@@ -1712,6 +1754,73 @@ class Star:
         plt.legend(fontsize='small', loc='best')
         plt.grid(True)
         plt.tight_layout()
+
+        # ─── Interactive scale slider (Jupyter %matplotlib widget) ─
+        # Works for both line and scatter modes.
+        # Keep references to the artists we’ll update
+        ax_main = plt.gca()
+        blue_artist = None
+        red_artist  = None
+
+        if scatter:
+            # PathCollection; update with set_offsets
+            blue_artist = ax_main.collections[0]   # first scatter call above
+            red_artist  = ax_main.collections[1]   # second scatter call above
+        else:
+            # Line2D; update with set_ydata
+            blue_artist = ax_main.lines[0]         # first plot call above (blue)
+            red_artist  = ax_main.lines[1]         # second plot call above (red)
+
+        # Create slider axis below the plot
+        plt.subplots_adjust(bottom=0.18)  # give room for slider & button
+        ax_slider = plt.axes([0.13, 0.06, 0.70, 0.03])  # [left, bottom, width, height]
+        ax_reset  = plt.axes([0.85, 0.055, 0.10, 0.04])
+
+        # Slider range: ±3× around default, but clamp to sensible bounds
+        lo = max(0.1, default_scale / 10.0)
+        hi = min(10.0, default_scale * 10.0)
+        scale_slider = Slider(ax=ax_slider, label="Scale blue→red", valmin=lo, valmax=hi,
+                              valinit=default_scale, valstep=0.001)
+
+        reset_btn = Button(ax_reset, "Reset")
+
+        # Keep pristine copies to avoid cumulative rounding
+        fl_min_base = fl_min.copy() if even_emission_line else (1.0 + (fl_min - 1.0) / default_scale).copy()
+        # Note: if even_emission_line=False, fl_min is unscaled now; we still allow interactive scaling from 1.0
+
+        def _apply_scale(factor):
+            y_scaled = 1.0 + (fl_min_base - 1.0) * factor
+            if scatter:
+                # update blue scatter offsets
+                blue_artist.set_offsets(np.column_stack((wl_min, y_scaled)))
+            else:
+                blue_artist.set_ydata(y_scaled)
+            # Update legend text to reflect current factor (optional)
+            leg = ax_main.get_legend()
+            if leg is not None:
+                # keep labels but append factor to blue
+                labels = [t.get_text() for t in leg.get_texts()]
+                if len(labels) >= 1:
+                    # replace or append "(×f=...)" to first label
+                    base = labels[0].split("×f=")[0].strip()
+                    labels[0] = f"{base} ×f={factor:.3f}"
+                    for txt, new in zip(leg.texts, labels):
+                        txt.set_text(new)
+            ax_main.figure.canvas.draw_idle()
+
+        def _on_slider(val):
+            _apply_scale(scale_slider.val)
+
+        def _on_reset(event):
+            scale_slider.reset()
+
+        scale_slider.on_changed(_on_slider)
+        reset_btn.on_clicked(_on_reset)
+
+        # If we pre-scaled (even_emission_line), ensure legend shows the initial factor
+        if even_emission_line:
+            _apply_scale(default_scale)
+
 
         if auto_annotate:
             lines_rest = _gather_line_list(species_filter)

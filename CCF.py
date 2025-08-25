@@ -38,6 +38,7 @@ class CCFclass:
                  PlotAll:   bool = False,
                  star_name: str | None = None,
                  epoch: str | int | None = None,
+                 spectrum: str | int | None = None,
                  line_tag: str = "",
                  savePlot: bool = False,
                  run_ts: str = "",
@@ -51,6 +52,7 @@ class CCFclass:
         self.CrossVeloMax    = CrossVeloMax
         self.PlotFirst   = PlotFirst
         self.PlotAll = PlotAll
+        self.spectrum = spectrum
         self._first_done = not PlotFirst
         self.savePlot = savePlot
 
@@ -77,33 +79,19 @@ class CCFclass:
     def _crosscorreal(self, Observation, Mask, CrossCorInds, sRange, N, veloRange, wavegridlog):
         CCFarr = np.array([self._CCF(np.copy(Observation),
                                (np.roll(Mask, s))[CrossCorInds],N) for s in sRange])
-        # print(f'CCFarr = {CCFarr}')
         IndMax  = np.argmax(CCFarr)
-        # print(f'IndMax = {IndMax}')
-        # print(f'veloRange = {veloRange}')
-        # print(f'CCFarr = {CCFarr}')
         vmax = veloRange[IndMax]
         CCFMAX1  = CCFarr[IndMax]
 
         # edges at fitfac·CCFMAX1
         LeftEdgeArr  = np.abs(self.Fit_Range_in_fraction*CCFMAX1 - CCFarr[:IndMax])
         RightEdgeArr = np.abs(self.Fit_Range_in_fraction*CCFMAX1 - CCFarr[IndMax+1:])
-        # if len(LeftEdgeArr) == 0 or len(RightEdgeArr) == 0:
-        #     print(f"Can't find local maximum in CCF for star {self.star_name}, epoch {self.epoch} line {self.line_tag}")
-        #     return np.array([None,None])
-        #
-        # LeftEdge = np.abs(Fit_range * CCFMAX1 - CCFAR[:IndMax])
-        # RightEdge = np.abs(Fit_range * CCFMAX1 - CCFAR[IndMax + 1:])
 
         if len(LeftEdgeArr) == 0 or len(RightEdgeArr) == 0:
             print("Can't find local maximum in CCF\n")
             fig1, ax1 = plt.subplots()
             ax1.plot(veloRange, CCFarr, color='C0', label=f'obs {self.star_name}')
-            # ax1.plot(wavegridlog[CrossCorInds], Observation, label='Observation', color='k', alpha=0.8)
-            # ax1.plot(wavegridlog, Mask - np.mean(Mask), label='Template (unshifted)', color='orchid', alpha=0.9)
-            # fig1.savefig(os.path.join(PathToOutput, f'ccf{self.star_name}.pdf'))
             plt.show()
-            #plt.close(fig1)
             return np.array([None, None, None, None])
 
         IndFit1 = np.argmin(LeftEdgeArr)
@@ -123,15 +111,25 @@ class CCFclass:
             RV = vmax
             RV_error = sigma
             star_name = getattr(self, "star_name", "unknown").strip()
-            epoch = getattr(self, "epoch", 0.0)  # e.g. MJD float
+            epoch = getattr(self, "epoch", None)
+            spectrum = getattr(self, "spectrum", None)
             line_rng = self.CrossCorRangeA[0]  # first interval
             line_tag = getattr(self, "line_tag", "")
-            line_txt = (f"{line_tag}  ({line_rng[0]:.0f}–{line_rng[1]:.0f} nm)"
-                        if line_tag else f"{line_rng[0]:.0f}–{line_rng[1]:.0f} nm")
+
+            # units for labels based on nm flag
+            wave_units = "nm" if self.nm else "Å"
+            line_txt = (f"{line_tag}  ({line_rng[0]:.0f}–{line_rng[1]:.0f} {wave_units})"
+                        if line_tag else f"{line_rng[0]:.0f}–{line_rng[1]:.0f} {wave_units}")
+
+            # epoch/spectrum label parts
+            epoch_txt = f"Epoch {epoch}" if epoch is not None else "Epoch ?"
+            spec_txt = f"  |  Spec {spectrum}" if spectrum is not None else ""
 
             # safe strings for filenames
             clean_star = re.sub(r"[^A-Za-z0-9_-]", "_", star_name)
-            epoch_str = f"{epoch:.2f}"  # e.g. 60234.45
+            epoch_str = str(epoch) if epoch is not None else "NA"
+            spec_str = f"_S{int(spectrum)}" if isinstance(spectrum, (int, np.integer)) else (
+                f"_S{spectrum}" if spectrum is not None else "")
             rv_tag = f"{RV:+.1f}".replace('+', 'p').replace('-', 'm')
 
             # -------- 1.  CCF figure ----------------------------------------
@@ -141,7 +139,9 @@ class CCFclass:
             ax1.axvline(RV, ls='--', color='r',
                         label=f"RV = {RV:.2f} ± {RV_error:.2f} km/s")
 
-            ax1.set_title(f"CCF  |  {star_name}  |  Epoch {epoch_str}  |  {line_txt}",
+            # ax1.set_title(f"CCF  |  {star_name}  |  Epoch {epoch_str}  |  {line_txt}",
+            #               fontsize=14, weight='bold')
+            ax1.set_title(f"CCF  |  {star_name}  |  {epoch_txt}{spec_txt}  |  {line_txt}",
                           fontsize=14, weight='bold')
             ax1.set_xlabel('Radial Velocity [km/s]')
             ax1.set_ylabel('Normalized CCF')
@@ -160,9 +160,13 @@ class CCFclass:
             ax2.plot(wavegridlog * (1 + RV / clight), Mask - np.mean(Mask), label='Template (shifted)',
                      color='turquoise', alpha=0.9)
 
-            ax2.set_title(f"Spectra  |  {star_name}  |  Epoch {epoch_str}  |  {line_txt}",
+            # ax2.set_title(f"Spectra  |  {star_name}  |  Epoch {epoch_str}  |  {line_txt}",
+            #               fontsize=14, weight='bold')
+            # ax2.set_xlabel(r'Wavelength [nm]')
+            ax2.set_title(f"Spectra  |  {star_name}  |  {epoch_txt}{spec_txt}  |  {line_txt}",
                           fontsize=14, weight='bold')
-            ax2.set_xlabel(r'Wavelength [nm]')
+            ax2.set_xlabel(rf'Wavelength [{wave_units}]')  # nm or Å
+
             ax2.set_ylabel('Normalized Flux')
             ax2.grid(ls='--', alpha=0.4)
             ax2.legend()
@@ -174,8 +178,11 @@ class CCFclass:
                 out_dir = Path("../output") / clean_star / "CCF" / ts_str / line_tag
                 out_dir.mkdir(parents=True, exist_ok=True)
 
-                fig1.savefig(out_dir / f"{clean_star}_MJD{epoch_str}_RV{rv_tag}_CCF.png", dpi=150)
-                fig2.savefig(out_dir / f"{clean_star}_MJD{epoch_str}_RV{rv_tag}_SPEC.png", dpi=150)
+                # fig1.savefig(out_dir / f"{clean_star}_MJD{epoch_str}_RV{rv_tag}_CCF.png", dpi=150)
+                # fig2.savefig(out_dir / f"{clean_star}_MJD{epoch_str}_RV{rv_tag}_SPEC.png", dpi=150)
+                fig1.savefig(out_dir / f"{clean_star}_MJD{epoch_str}{spec_str}_RV{rv_tag}_CCF.png", dpi=150)
+                fig2.savefig(out_dir / f"{clean_star}_MJD{epoch_str}{spec_str}_RV{rv_tag}_SPEC.png", dpi=150)
+
                 print(f"[saved] plots to {out_dir}")
 
             if self.PlotFirst or self.PlotAll:

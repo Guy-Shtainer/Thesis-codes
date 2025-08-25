@@ -1,10 +1,6 @@
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider, Button, RangeSlider
 import numpy as np
-import argparse
-import re
-from ObservationClass import ObservationManager as obsm
-import specs
 import TwoDImage as p2D
 import utils as ut
 
@@ -715,5 +711,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

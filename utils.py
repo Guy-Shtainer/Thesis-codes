@@ -1,7 +1,7 @@
 import numpy as np
 
 
-def robust_mean(data, sigma=2):
+def robust_mean(data, sigma=3):
     """
     Calculate the mean of the data while excluding outliers that are more than
     a specified number of standard deviations away from the mean.
@@ -44,7 +44,7 @@ def robust_mean(data, sigma=2):
 
 import numpy as np
 
-def double_robust_mean(data, sigma=2):
+def double_robust_mean(data, sigma=3):
     """
     Calculate the mean of the data while excluding outliers more than a specified number
     of standard deviations away from the mean. The outlier exclusion process is performed twice.
@@ -96,7 +96,7 @@ def double_robust_mean(data, sigma=2):
     robust_mean = np.mean(data2)
     return robust_mean
 
-def robust_std(data, sigma=2):
+def robust_std(data, sigma=3):
     """
     Calculate the standard deviation of the data while excluding outliers that are more than
     a specified number of standard deviations away from the mean.
