@@ -20,27 +20,27 @@ from astroquery.simbad import Simbad
 from astroquery.vizier import Vizier
 from astroquery.gaia import Gaia
 
-
-#Tomers tools
+# Tomers tools
 from CCF import CCFclass
 import plot as p
 import TwoDImage as p2D
 
 # My tools
 import specs
-from FitsClass import FITSFile as myfits 
+from FitsClass import FITSFile as myfits
 # import sys
 
 # Assume catalogs.py is available and contains dictionaries named after catalogs
 import catalogs
 
-#SIMBAD
+# SIMBAD
 import requests
 from bs4 import BeautifulSoup
 import re
 
+
 class Star:
-    def __init__(self, star_name, data_dir, backup_dir, to_print = True):
+    def __init__(self, star_name, data_dir, backup_dir, to_print=True):
         """
         Initialize the Star with an identifier and a dictionary of file paths.
         file_paths: A nested dictionary organized by epochs, sub-exposures, and bands.
@@ -61,17 +61,15 @@ class Star:
         self.sensitivities = []
         self.to_print = to_print
 
+    ########################################                 Printing                       ########################################
 
-
-########################################                 Printing                       ########################################
-
-    def print(self,text, to_print = True):
+    def print(self, text, to_print=True):
         if to_print and self.to_print:
             print(text)
-    
-########################################                 File Handleing                      ########################################
-    
-    def get_file_path(self, epoch_number, band=None, D2 = False):
+
+    ########################################                 File Handleing                      ########################################
+
+    def get_file_path(self, epoch_number, band=None, D2=False):
         """
         Retrieves the full path for a specific observation.
 
@@ -100,19 +98,20 @@ class Star:
             else:
                 num = int(filename.split('.')[-2])
                 num += 1
-                filename = filename[:-15] + ':' + filename[-14:-12] + ':' + filename[-11:-8] + f'{num}'.zfill(3) + '.fits'
+                filename = filename[:-15] + ':' + filename[-14:-12] + ':' + filename[-11:-8] + f'{num}'.zfill(
+                    3) + '.fits'
                 fits_directory = os.path.join(self.data_dir, self.star_name, f'epoch{epoch_number}', band, '2D image')
                 print(fits_directory)
                 fits_file = glob.glob(os.path.join(fits_directory, '**', '*.fits'), recursive=True)
                 print(fits_file)
                 return fits_file[0]
-                return os.path.join(self.data_dir, self.star_name, f'epoch{epoch_number}', band, '2D image',filename)
+                return os.path.join(self.data_dir, self.star_name, f'epoch{epoch_number}', band, '2D image', filename)
         else:
             print(f"Band '{band}' not found in epoch '{epoch_number}")
             return None
 
-########################################                                     ########################################
-    
+    ########################################                                     ########################################
+
     def delete_files(self, epoch_numbers=None, bands=None, backup_flag=True,
                      property_to_delete='', delete_all=False, delete_all_in_folder=False):
         """
@@ -141,7 +140,8 @@ class Star:
                 if bands is None:
                     missing.append('bands')
                 missing_str = ', '.join(missing)
-                raise ValueError(f"Error: {missing_str} parameter(s) are None for star '{self.star_name}'. To delete all options, set delete_all=True.")
+                raise ValueError(
+                    f"Error: {missing_str} parameter(s) are None for star '{self.star_name}'. To delete all options, set delete_all=True.")
 
         # Ensure epoch_numbers and bands are lists
         if not isinstance(epoch_numbers, list):
@@ -157,7 +157,7 @@ class Star:
             for band in bands:
                 # Construct the base path to the 'output' directory
                 output_dir = os.path.join(self.data_dir, self.star_name, epoch_key, band, 'output')
-                
+
                 # If property_to_delete is empty, prompt for input
                 if not property_to_delete:
                     print(f"Error: 'property_to_delete' is empty. Please specify a file or folder name.")
@@ -180,10 +180,11 @@ class Star:
                     if matching_files:
                         self._handle_matching_files(matching_files, backup_flag, delete_all_in_folder)
                     else:
-                        print(f"Error: No file or folder matching '{property_to_delete}' found in '{output_dir}' for star '{self.star_name}', epoch '{epoch_num}', band '{band}'.")
+                        print(
+                            f"Error: No file or folder matching '{property_to_delete}' found in '{output_dir}' for star '{self.star_name}', epoch '{epoch_num}', band '{band}'.")
 
-########################################                                     ########################################
-    
+    ########################################                                     ########################################
+
     def _delete_file(self, file_path, backup_flag):
         """Helper method to delete a single file."""
         # If backup_flag is True, backup before deletion
@@ -196,19 +197,19 @@ class Star:
         except Exception as e:
             print(f"Error deleting file '{file_path}': {e}")
 
-########################################                                     ########################################
-    
+    ########################################                                     ########################################
+
     def _handle_matching_files(self, matching_files, backup_flag, delete_all_in_folder):
         """Helper method to handle deletion of matching files."""
         if not matching_files:
             print("No matching files to delete.")
             return
-        
+
         # Display files and number them
         print("\nFound the following matching files:")
         for idx, file_path in enumerate(matching_files, start=1):
             print(f"{idx}. {os.path.basename(file_path)}")
-        
+
         # Prompt user for input
         while True:
             user_input = input("\nEnter the numbers of the files to delete (comma-separated), or 'all' to delete all: ")
@@ -224,7 +225,7 @@ class Star:
                         print("Invalid input. Please enter valid file numbers.")
                 except ValueError:
                     print("Invalid input. Please enter numbers separated by commas or 'all'.")
-        
+
         # Delete selected files
         for idx in selected_indices:
             file_path = matching_files[idx - 1]
@@ -232,9 +233,9 @@ class Star:
                 self._handle_folder_deletion(file_path, file_path, delete_all_in_folder)
             else:
                 self._delete_file(file_path, backup_flag)
-            
-########################################                                     ########################################
-    
+
+    ########################################                                     ########################################
+
     def _handle_folder_deletion(self, folder_path, backup_flag, delete_all_in_folder):
         """Helper method to handle deletion of files within a folder."""
         # List files in the folder
@@ -254,7 +255,8 @@ class Star:
         else:
             # Prompt user for input
             while True:
-                user_input = input("\nEnter the numbers of the files to delete (comma-separated), or 'all' to delete all: ")
+                user_input = input(
+                    "\nEnter the numbers of the files to delete (comma-separated), or 'all' to delete all: ")
                 if user_input.strip().lower() == 'all':
                     selected_indices = list(range(1, len(files_in_folder) + 1))
                     break
@@ -282,8 +284,8 @@ class Star:
             except Exception as e:
                 print(f"Error deleting folder '{folder_path}': {e}")
 
-########################################                                     ########################################
-    
+    ########################################                                     ########################################
+
     def clean(self):
         """
         Cleans up empty folders within the 'output' directories for every band and epoch.
@@ -332,7 +334,8 @@ class Star:
                                                     os.remove(checkpoint_file)
                                                     print(f"Deleted file: '{checkpoint_file}'")
                                                 except PermissionError:
-                                                    print(f"Permission denied when trying to delete file: '{checkpoint_file}'")
+                                                    print(
+                                                        f"Permission denied when trying to delete file: '{checkpoint_file}'")
                                                 except Exception as e:
                                                     print(f"Error deleting file '{checkpoint_file}': {e}")
                                             os.rmdir(item_path)
@@ -343,15 +346,15 @@ class Star:
                             # 'output' directory does not exist
                             pass  # Nothing to do if output directory doesn't exist
 
-########################################                                     ########################################
-    
+    ########################################                                     ########################################
+
     def _load_file(self, file_path):
         """
         Helper method to load data from a file.
-    
+
         Parameters:
             file_path (str): The path to the file to load.
-    
+
         Returns:
             dict or Any: The data loaded from the file.
                          Returns None if an error occurs.
@@ -375,7 +378,7 @@ class Star:
             print(f"Error loading file '{file_path}': {e}")
             return None
 
-########################################                                     ########################################
+    ########################################                                     ########################################
 
     def _generate_output_file_path(self, method_name, params, multiple_params):
         """
@@ -392,7 +395,7 @@ class Star:
         epoch_num = params['epoch_num']
         band = params['band']
         # Base output directory
-        base_output_dir = os.path.join(self.data_dir, self.star_name,f'epoch{epoch_num}',band,'output')
+        base_output_dir = os.path.join(self.data_dir, self.star_name, f'epoch{epoch_num}', band, 'output')
 
         if multiple_params:
             # Create a subfolder with the method name
@@ -411,8 +414,7 @@ class Star:
             filename = f"{method_name}.npz"
             return os.path.join(base_output_dir, filename)
 
-########################################                                     ########################################
-    
+    ########################################                                     ########################################
 
     def _save_result(self, output_file_path, result, params):
         """
@@ -426,7 +428,7 @@ class Star:
         # Include parameters in the saved file for traceability
         np.savez_compressed(output_file_path, result=result, params=params)
 
-########################################                                     ########################################
+    ########################################                                     ########################################
 
     def save_property(self, property_name, property_data, epoch_number, band, overwrite=False, backup=True):
 
@@ -437,17 +439,18 @@ class Star:
         # Create an 'output' folder in the same directory if it doesn't exist
         output_dir = os.path.join(directory, "output")
         os.makedirs(output_dir, exist_ok=True)
-        
+
         # Save the property data to an npz file in the 'output' folder
         output_path = os.path.join(output_dir, f"{property_name}.npz")
-        
+
         if os.path.exists(output_path):
             if not overwrite:
-                raise FileExistsError(f"Cannot save property, file already exists: {output_path}. Set overwrite=True to proceed.")
+                raise FileExistsError(
+                    f"Cannot save property, file already exists: {output_path}. Set overwrite=True to proceed.")
             if backup:
                 print(f"File exists. Creating a backup before overwriting: {output_path}")
                 self.backup_property(output_path, overwrite)
-        
+
         # Check the type of property_data and save accordingly
         if isinstance(property_data, dict):
             # Save dictionary using np.savez
@@ -457,8 +460,7 @@ class Star:
             np.savez(output_path, data=property_data)
         print(f"Property saved at {output_path}")
 
-
-########################################                                     ########################################
+    ########################################                                     ########################################
 
     def backup_property(self, output_path, overwrite):
         # Get the path of the observation file
@@ -470,30 +472,29 @@ class Star:
         # output_dir = os.path.join(directory, "output")
         # output_path = os.path.join(output_dir, f"{file_name}.npz")
         property_name = os.path.basename(output_path).split('.')[0]
-        
+
         if os.path.exists(output_path):
             # Determine backup directory based on 'overwrite' parameter
             backup_type = 'overwritten' if overwrite else 'deleted'
-    
+
             # Create backup directory structure in 'Backups' parallel to 'Data'
             backup_base_path = "Backups"
             # Build the backup directory path
             backup_dir = os.path.join(backup_base_path, backup_type, *directory.split(os.sep)[1:])
             os.makedirs(backup_dir, exist_ok=True)
-            
+
             # Generate backup file name with date and time
             timestamp = datetime.now().strftime("%d_%m_%Y__%H_%M_%S")
             backup_file_name = f"{property_name}_backup_{timestamp}.npz"
             backup_path = os.path.join(backup_dir, backup_file_name)
-            
+
             # Move the existing file to the backup location
             os.rename(output_path, backup_path)
             print(f"Backup created at {backup_path}")
         else:
             raise FileNotFoundError(f"Cannot create backup, original file not found: {output_path}")
 
-########################################                                     ########################################
-
+    ########################################                                     ########################################
 
     def get_all_epoch_numbers(self):
         """
@@ -505,8 +506,7 @@ class Star:
         epoch_numbers = [int(epoch[-1]) for epoch in self.observation_dict.keys()]
         return epoch_numbers
 
-########################################                                     ########################################
-
+    ########################################                                     ########################################
 
     def get_all_bands(self):
         """
@@ -515,19 +515,18 @@ class Star:
         Returns:
             list: A list of band names.
         """
-        bands = ['NIR','VIS','UVB','COMBINED']
+        bands = ['NIR', 'VIS', 'UVB', 'COMBINED']
         # bands = ['NIR','VIS','UVB','COMBINED2']
         return list(bands)
 
-    
-########################################              Data Handeling                  ########################################
-    
+    ########################################              Data Handeling                  ########################################
+
     def list_available_properties(self):
         """
         Lists all available properties (files and folders) in the 'output' directories
         within each band and epoch for this star. If a property is a folder, it shows
         the number of files inside the folder.
-    
+
         Returns:
             None
         """
@@ -535,16 +534,16 @@ class Star:
         if not os.path.exists(star_path):
             print(f"No data found for star '{self.star_name}' in '{self.data_dir}'.")
             return
-    
+
         # Collect data for the table
         table_data = []
-    
+
         # Iterate over epochs
         for epoch_dir in sorted(os.listdir(star_path)):
             epoch_path = os.path.join(star_path, epoch_dir)
             if os.path.isdir(epoch_path) and epoch_dir.startswith('epoch'):
                 epoch_num = epoch_dir.replace('epoch', '')
-    
+
                 # Iterate over bands
                 for band in sorted(os.listdir(epoch_path)):
                     band_path = os.path.join(epoch_path, band)
@@ -559,7 +558,8 @@ class Star:
                                 if os.path.isdir(prop_path):
                                     prop_type = 'Folder'
                                     # Count the number of files in the folder
-                                    num_files = len([f for f in os.listdir(prop_path) if os.path.isfile(os.path.join(prop_path, f))])
+                                    num_files = len([f for f in os.listdir(prop_path) if
+                                                     os.path.isfile(os.path.join(prop_path, f))])
                                     details = f"{num_files} files"
                                 else:
                                     prop_type = 'File'
@@ -580,29 +580,29 @@ class Star:
                                 'Type': '',
                                 'Details': ''
                             })
-    
+
         # Check if any data was collected
         if not table_data:
             print(f"No properties found for star '{self.star_name}'.")
             return
-    
+
         # Print the table header
         print(f"\nAvailable properties for star '{self.star_name}':\n")
         header = "{:<10} {:<10} {:<40} {:<10} {:<15}".format('Epoch', 'Band', 'Property', 'Type', 'Details')
         print(header)
         print('-' * len(header))
-    
+
         # Print each row
         for row in table_data:
             print("{:<10} {:<10} {:<40} {:<10} {:<15}".format(
                 row['Epoch'], row['Band'], row['Property'], row['Type'], row['Details']
             ))
-    
+
         print('\n')
-    
-########################################                                     ########################################
-    
-    def load_property(self, property_name, epoch_num, band, to_print = True):
+
+    ########################################                                     ########################################
+
+    def load_property(self, property_name, epoch_num, band, to_print=True):
         """
         Loads and returns the data stored in the specified property for a given epoch and band.
 
@@ -650,9 +650,9 @@ class Star:
                     if 1 <= selected_index <= len(files_in_folder):
                         break
                     else:
-                        self.print("Invalid input. Please enter a valid file number.",to_print)
+                        self.print("Invalid input. Please enter a valid file number.", to_print)
                 except ValueError:
-                    self.print("Invalid input. Please enter a number corresponding to the file.",to_print)
+                    self.print("Invalid input. Please enter a number corresponding to the file.", to_print)
 
             # Load and return the selected file
             selected_file = files_in_folder[selected_index - 1]
@@ -660,13 +660,11 @@ class Star:
             return self._load_file(selected_file_path)
         else:
             # Property does not exist
-            self.print(f"No file or folder named '{property_name}' found in '{output_dir}'.",to_print)
+            self.print(f"No file or folder named '{property_name}' found in '{output_dir}'.", to_print)
             return None
 
+    ########################################                                     ########################################
 
-    
-########################################                                     ########################################
-    
     def load_observation(self, epoch_num, band=None):
         """
         Loads the FITS file for a specific observation.
@@ -698,8 +696,8 @@ class Star:
             print(f"Error loading FITS file: {e} error here")
             return None
 
-########################################                                     ########################################
-        
+    ########################################                                     ########################################
+
     def load_2D_observation(self, epoch_num, band=None):
         """
         Loads the FITS file for a specific observation.
@@ -715,7 +713,7 @@ class Star:
         # Get the full path of the FITS file
         if band == None:
             band = 'COMBINED'
-        file_path = self.get_file_path(epoch_num, band, D2 = True)
+        file_path = self.get_file_path(epoch_num, band, D2=True)
         print(file_path)
 
         if not file_path:
@@ -731,8 +729,8 @@ class Star:
             print(f"Error loading FITS file: {e} error here")
             return None
 
-########################################                                     ########################################
-    
+    ########################################                                     ########################################
+
     def create_observation_table(self, epoch_list=None, band_list=None, attributes_list=None, print_table=True):
         """
         Scans the star's folder for FITS files and extracts 'DISPELEM' and 'TMID'.
@@ -749,7 +747,7 @@ class Star:
         - pd.DataFrame: A Pandas DataFrame containing the extracted data.
         """
         table_data = []
-        
+
         try:
             # Loop through all epochs
             for epoch in self.observation_dict.keys():
@@ -763,12 +761,12 @@ class Star:
                 # Loop through bands or combined FITS files
                 for band_or_combined, filename in self.observation_dict[epoch].items():
                     # Filter by band if band_list is provided
-                    if band_list and band_or_combined not in band_list: # and band_or_combined != 'combined':
+                    if band_list and band_or_combined not in band_list:  # and band_or_combined != 'combined':
                         continue
 
                     # Get the full file path
                     file_path = os.path.join(self.data_dir, self.star_name, epoch, band_or_combined, filename)
-                    
+
                     # Try to open the FITS file and extract the data
                     try:
                         with fits.open(file_path) as hdul:
@@ -790,7 +788,7 @@ class Star:
                                     if row[attr_name] == 'Unknown':
                                         row[attr_name] = hdul[1].header.get(attr, 'Unknown')
 
-                                    
+
                             else:
                                 # Get the band (DISPELEM) from the primary header (0th extension)
                                 band = hdul[0].header.get('DISPELEM', 'Unknown')
@@ -799,12 +797,11 @@ class Star:
                                 tmid = hdul[1].header.get('TMID', 'Unknown')
 
                                 row = {
-                                'File Name': filename,
-                                'Band': band,
-                                'Mid-Exposure Date (TMID)': tmid
+                                    'File Name': filename,
+                                    'Band': band,
+                                    'Mid-Exposure Date (TMID)': tmid
                                 }
-                            
-                            
+
                             # Add the row to the table data
                             table_data.append(row)
 
@@ -814,20 +811,19 @@ class Star:
             print(f"Error: Invalid epoch or sub-exposure number provided. Details: {ke}")
         except Exception as e:
             print(f"Unexpected error: {e}")
-        
+
         # Create a Pandas DataFrame from the collected data
         df = pd.DataFrame(table_data)
-        
+
         # Print the table if print_table is True
         if print_table:
             display(df)
-        
+
         return df
 
+    ########################################                 Plots                      ########################################
 
-########################################                 Plots                      ########################################
-    
-    def plot_spectra_old(self, epoch_nums=None, bands=None, save=False, linewidth = 1.5, scatter = False):
+    def plot_spectra_old(self, epoch_nums=None, bands=None, save=False, linewidth=1.5, scatter=False):
         """
         Plots flux vs. wavelength from the FITS files for the specified epochs and bands.
 
@@ -876,9 +872,10 @@ class Star:
 
                 # Plot the spectrum
                 if scatter:
-                    plt.scatter(wavelength, flux, label=f'Epoch {epoch_num}, Band {band}', linewidth = linewidth)
+                    plt.scatter(wavelength, flux, label=f'Epoch {epoch_num}, Band {band}', linewidth=linewidth)
                 else:
-                    plt.plot(wavelength, flux, label=f'Epoch {epoch_num}, Band {band}', linewidth = linewidth, color = color)
+                    plt.plot(wavelength, flux, label=f'Epoch {epoch_num}, Band {band}', linewidth=linewidth,
+                             color=color)
 
             except Exception as e:
                 print(f"Error reading FITS file '{fits_file}': {e}")
@@ -916,7 +913,7 @@ class Star:
         # Show the plot
         plt.show()
 
-########################################                                       ########################################
+    ########################################                                       ########################################
 
     def plot_spectra(
             self,
@@ -1046,7 +1043,7 @@ class Star:
         rv_ref = None
         if Rest_frame:
             for ep in epoch_nums:
-                rv_by_epoch[ep] =  self.load_property("RVs", ep, "COMBINED")['C IV 5808-5812'].item()['full_RV']
+                rv_by_epoch[ep] = self.load_property("RVs", ep, "COMBINED")['C IV 5808-5812'].item()['full_RV']
             rv_vals = [v for v in rv_by_epoch.values() if v is not None and np.isfinite(v)]
             rv_ref = float(np.mean(rv_vals)) if rv_vals else 0.0
 
@@ -1189,16 +1186,16 @@ class Star:
         plt.show()
 
     ########################################                                       ########################################
-    
+
     def plot_spectra_errors(self, epoch_nums=None, bands=None, save=False):
         """
         Plots the error of the flux vs. wavelength from the FITS files for the specified epochs and bands.
-    
+
         Parameters:
             epoch_nums (list or None): List of epoch numbers to plot. Defaults to None (all epochs).
             bands (list or None): List of bands to plot. Defaults to None (all bands).
             save (bool): If True, saves the figure. Defaults to False.
-    
+
         Returns:
             None
         """
@@ -1207,21 +1204,21 @@ class Star:
             epoch_nums = self.get_all_epoch_numbers()
         elif not isinstance(epoch_nums, list):
             epoch_nums = [epoch_nums]
-    
+
         if bands is None:
             bands = self.get_all_bands()
         elif not isinstance(bands, list):
             bands = [bands]
-    
+
         # Generate combinations of epoch_numbers and bands
         combinations = list(product(epoch_nums, bands))
-    
+
         # Check if only one combination
         single_plot = len(combinations) == 1
-    
+
         # Initialize the plot
         plt.figure(figsize=(10, 6))
-    
+
         # Loop over combinations and plot
         for epoch_num, band in combinations:
             try:
@@ -1229,24 +1226,24 @@ class Star:
                 data = fits_file.data
                 wavelength = data['WAVE'][0]
                 error = data['ERR'][0]  # Assuming the error data is stored under 'ERR'
-    
+
                 # Plot the error spectrum
                 plt.plot(wavelength, error, label=f'Epoch {epoch_num}, Band {band}')
-    
+
             except Exception as e:
                 print(f"Error reading FITS file for Epoch {epoch_num}, Band {band}: {e}")
                 continue
-    
+
         # Customize the plot
         plt.xlabel('Wavelength [nm]')
         plt.ylabel(r'Error [$\frac{erg}{cm^{2}\cdot s\cdot \AA}$]')
         plt.title(f'Error Spectrum of {self.star_name}')
         plt.legend()
         plt.grid(True)
-    
+
         # Adjust layout
         plt.tight_layout()
-    
+
         if save:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             if single_plot:
@@ -1262,14 +1259,14 @@ class Star:
                 os.makedirs(output_dir, exist_ok=True)
                 filename = f"{self.star_name}_error_{timestamp}.png"
                 save_path = os.path.join(output_dir, filename)
-    
+
             plt.savefig(save_path)
             print(f"Figure saved to '{save_path}'")
-    
+
         # Show the plot
         plt.show()
 
-########################################                                       ########################################
+    ########################################                                       ########################################
 
     def plot_normalized_spectra(self,
                                 epoch_nums=None,
@@ -1409,7 +1406,7 @@ class Star:
 
             ax.set_xlabel('Wavelength [nm]')
             ax.set_ylabel('Normalized Flux')
-            ax.set_title(f"{self.star_name} — Bands: {', '.join(bands)}",fontsize=10)
+            ax.set_title(f"{self.star_name} — Bands: {', '.join(bands)}", fontsize=10)
             ax.legend(fontsize='small', ncol=2)
             ax.grid(True)
             fig.canvas.draw_idle()
@@ -1473,6 +1470,7 @@ class Star:
                                 match_to_peaks=False,  # only label lines that align with detected peaks
                                 peak_prominence=0.03,  # tweak for your S/N; used if match_to_peaks=True
                                 max_label_per_100A=6,  # de-clutter throttle
+                                even_emission_line = False
                                 ):
         """
         ...
@@ -1653,6 +1651,20 @@ class Star:
 
         wl_min, fl_min, tag_min = _load(min_ep)
         wl_max, fl_max, tag_max = _load(max_ep)
+        if even_emission_line:
+            # plt.plot(wl_min, fl_min, 'k', label='emission line')
+            max_max = np.max(fl_max[(5700 < wl_max) & (wl_max < 5900)])
+            print(f'max_max is {max_max}')
+
+            max_min = np.max(fl_min[(5700 < wl_min) & (wl_min < 5900)])
+            print(f'max_min is {max_min}')
+            if  max_max > max_min:
+                print('max_max is bigger')
+                fl_min = (fl_min - 1)*(max_max/max_min) + 1
+                # fl_min = (fl_min ) * (max_max / max_min)
+            else:
+                fl_max = (fl_max - 1)*(max_min/max_max) + 1
+                print('max_max is smaller')
 
         # ─── Optional: correct for LMC systemic Doppler shift ────────
         if correct_lmc:
@@ -1794,8 +1806,9 @@ class Star:
         )
 
     ########################################                 Method Executer                      ########################################
-    
-    def execute_method(self, method, params={}, epoch_numbers=None, bands=None, overwrite=False, backup=True, save = True, parallel=False, max_workers=None):
+
+    def execute_method(self, method, params={}, epoch_numbers=None, bands=None, overwrite=False, backup=True, save=True,
+                       parallel=False, max_workers=None):
         """
         Executes a given method with provided parameters, handling overwrite, backup, and parallel execution.
 
@@ -1852,7 +1865,7 @@ class Star:
             for key, value in zip(param_keys, combination[2:]):
                 param_dict[key] = value
             params_list.append(param_dict)
-        
+
         # Determine if there are multiple sets of parameters
         multiple_params = len(params_list) > 1
         print(params_list)
@@ -1861,7 +1874,8 @@ class Star:
             if max_workers is None:
                 max_workers = multiprocess.cpu_count() - 1
             # Use partial to fix the method argument
-            method_wrapper_partial = partial(self._method_wrapper, method, overwrite=overwrite, backup=backup, multiple_params=multiple_params, save=save)
+            method_wrapper_partial = partial(self._method_wrapper, method, overwrite=overwrite, backup=backup,
+                                             multiple_params=multiple_params, save=save)
             with multiprocess.Pool(processes=max_workers) as pool:
                 results = pool.map(method_wrapper_partial, params_list)
         else:
@@ -1871,9 +1885,9 @@ class Star:
                 results.append(result)
         return results
 
-########################################                                       ########################################
+    ########################################                                       ########################################
 
-    def _method_wrapper(self, method, params, overwrite, backup, multiple_params,save):
+    def _method_wrapper(self, method, params, overwrite, backup, multiple_params, save):
         """
         Wrapper to execute the method with given parameters, handling overwrite and backup.
 
@@ -1905,7 +1919,7 @@ class Star:
             # Save the result
             if save:
                 self._save_result(output_file_path, result, params)
-    
+
                 print(f"Saved result to '{output_file_path}'.")
             else:
                 print(f'Didnt save due to save flag = False, but returned the results anyway')
@@ -1915,16 +1929,15 @@ class Star:
             print(f"Error executing method '{method.__name__}' with params {params}: {e}")
             return None
 
-
-########################################                SIMABD                   ########################################
+    ########################################                SIMABD                   ########################################
 
     def get_bat_id(self):
         """
         Fetches the BAT99 identifier for a given star from SIMBAD.
-    
+
         Parameters:
             star_name (str): The name of the star to search for.
-    
+
         Returns:
             str or None: The BAT99 identifier if found, else None.
         """
@@ -1934,7 +1947,7 @@ class Star:
             'Ident': self.star_name,
             'submit': 'SIMBAD search'
         }
-    
+
         try:
             # Send a GET request to the SIMBAD server
             response = requests.get(base_url, params=params)
@@ -1942,16 +1955,16 @@ class Star:
         except requests.exceptions.RequestException as e:
             print(f"An error occurred while fetching data: {e}")
             return None
-    
+
         # Get the HTML content
         html_content = response.text
         index = html_content.find('BAT99')
-        index = html_content.find('BAT99',index+1)
-        index = html_content.find('BAT99',index+1)
-        index = html_content.find('BAT99',index+1)
-        index2 = html_content.find('\n',index+5+5)
-        BAT_num =  html_content[index+5+5:index2]
-    
+        index = html_content.find('BAT99', index + 1)
+        index = html_content.find('BAT99', index + 1)
+        index = html_content.find('BAT99', index + 1)
+        index2 = html_content.find('\n', index + 5 + 5)
+        BAT_num = html_content[index + 5 + 5:index2]
+
         try:
             BAT_num_int = int(BAT_num)
             return BAT_num
@@ -1959,15 +1972,15 @@ class Star:
             print(f"BAT99 identifier not found. The indexes were: {index} and {index2}. It found {BAT_num}")
             return None
 
-########################################                SIMABD & Others                   ########################################
+    ########################################                SIMABD & Others                   ########################################
 
     def get_spectral_type(self):
         """
         Fetches the spectral type for a given star from SIMBAD.
-        
+
         Parameters:
             None (uses self.star_name).
-        
+
         Returns:
             str or None: The spectral type if found, else None.
         """
@@ -1977,7 +1990,7 @@ class Star:
             'Ident': self.star_name,
             'submit': 'SIMBAD search'
         }
-    
+
         try:
             # Send a GET request to the SIMBAD server
             response = requests.get(base_url, params=params)
@@ -1985,36 +1998,35 @@ class Star:
         except requests.exceptions.RequestException as e:
             print(f"An error occurred while fetching data: {e}")
             return None
-    
+
         # Get the HTML content
         html_content = response.text
-    
+
         # Locate "Spectral type" in the HTML and extract the value
         spectral_type_label = 'Spectral type:        </SPAN>'
         spectral_type_start = html_content.find(spectral_type_label)
         if spectral_type_start == -1:
             print("Spectral type not found in the SIMBAD response.")
             return None
-    
+
         # Parse the spectral type
         spectral_type_start = html_content.find('<TT>', spectral_type_start) + len('<TT>')
         spectral_type_end = html_content.find('</TT>', spectral_type_start)
         spectral_type = html_content[spectral_type_start:spectral_type_end].strip()
-    
+
         if spectral_type:
             return spectral_type
         else:
             print("Spectral type could not be parsed.")
             return None
 
-
-########################################                                   ########################################
+    ########################################                                   ########################################
 
     def get_catalogs_data(self, queries, catalogs_list=None):
         # Normalize queries input
         if isinstance(queries, str):
             queries = [queries]
-    
+
         # Use the catalogs list from catalogs.py if no custom list is provided
         if catalogs_list is None:
             selected_catalogs = catalogs.catalogs[:]  # make a copy of the list
@@ -2029,9 +2041,9 @@ class Star:
                 print("Available catalogs are:")
                 for cat in catalogs.catalogs:
                     print(f" - {cat}")
-    
+
         results = []  # Will store (Catalog, Query_Key, Query_Value)
-    
+
         # Handle SIMBAD queries
         if "SIMBAD" in selected_catalogs:
             Simbad.reset_votable_fields()
@@ -2057,7 +2069,7 @@ class Star:
                         queries[queries.index(q)] = chosen_field  # Update the query to the chosen field
                     else:
                         print("Invalid choice. Skipping this query for SIMBAD.")
-    
+
             try:
                 sim_res = Simbad.query_object(self.star_name)
                 if sim_res is None or len(sim_res) == 0:
@@ -2071,10 +2083,10 @@ class Star:
                             print(f"Query '{q}' not found in SIMBAD response.")
             except Exception as e:
                 print(f"Error querying SIMBAD: {e}")
-    
+
             # Remove SIMBAD from the selected catalogs after processing
             selected_catalogs.remove("SIMBAD")
-    
+
         # Handle Vizier queries
         viz = Vizier(row_limit=-1)
         for cat in selected_catalogs:
@@ -2083,7 +2095,7 @@ class Star:
                 if viz_res is None or len(viz_res) == 0:
                     print(f"No results found for {self.star_name} in {cat}.")
                     continue
-    
+
                 table = viz_res[0]
                 for q in queries:
                     if q in table.colnames:
@@ -2109,7 +2121,7 @@ class Star:
                             print("Invalid choice. Skipping this query in {cat}.")
             except Exception as e:
                 print(f"Error querying VizieR catalog {cat}: {e}")
-    
+
         # Handle Gaia queries (I_355_GAIADR3)
         if "I_355_GAIADR3" in selected_catalogs:
             gaia_fields = catalogs.I_355_GAIADR3.keys()  # Get available fields from catalogs.py
@@ -2134,7 +2146,7 @@ class Star:
                         valid_queries.append(chosen_field)
                     else:
                         print("Invalid choice. Skipping this query for GAIA.")
-    
+
             if valid_queries:
                 try:
                     gaia_query = f"SELECT {', '.join(valid_queries)} FROM gaiadr3.gaia_source WHERE source_id = {self.star_name}"
@@ -2149,7 +2161,7 @@ class Star:
                                 results.append(("I_355_GAIADR3", q, value))
                 except Exception as e:
                     print(f"Error querying Gaia: {e}")
-    
+
         # Now we have a list of (Catalog, Query_Key, Query_Value)
         # Print a table with star name, catalog, query key, and value
         if results:
@@ -2163,7 +2175,7 @@ class Star:
         # Normalize queries input
         if isinstance(queries, str):
             queries = [queries]
-    
+
         # Use the catalogs list from catalogs.py if no custom list is provided
         if catalogs_list is None:
             selected_catalogs = catalogs.catalogs[:]  # make a copy of the list
@@ -2178,15 +2190,15 @@ class Star:
                 print("Available catalogs are:")
                 for cat in catalogs.catalogs:
                     print(f" - {cat}")
-    
+
         results = []  # Will store (Catalog, Query_Key, Query_Value)
-    
+
         # Handle SIMBAD queries
         if "SIMBAD" in selected_catalogs:
             # Create a custom Simbad instance
             custom_simbad = Simbad()
             simbad_fields = catalogs.SIMBAD.keys()  # Get available fields from catalogs.py
-    
+
             # Add fields from queries
             valid_queries = []
             for q in queries:
@@ -2214,7 +2226,7 @@ class Star:
                         valid_queries.append(chosen_field)
                     else:
                         print("Invalid choice. Skipping this query for SIMBAD.")
-    
+
             # Query SIMBAD
             try:
                 sim_res = custom_simbad.query_object(self.star_name)
@@ -2229,10 +2241,10 @@ class Star:
                             print(f"Query '{q}' not found in SIMBAD response.")
             except Exception as e:
                 print(f"Error querying SIMBAD: {e}")
-    
+
             # Remove SIMBAD from the selected catalogs after processing
             selected_catalogs.remove("SIMBAD")
-    
+
         # Handle Vizier queries
         viz = Vizier(row_limit=-1)
         for cat in selected_catalogs:
@@ -2241,7 +2253,7 @@ class Star:
                 if viz_res is None or len(viz_res) == 0:
                     print(f"No results found for {self.star_name} in {cat}.")
                     continue
-    
+
                 table = viz_res[0]
                 for q in queries:
                     if q in table.colnames:
@@ -2267,7 +2279,7 @@ class Star:
                             print("Invalid choice. Skipping this query in {cat}.")
             except Exception as e:
                 print(f"Error querying VizieR catalog {cat}: {e}")
-    
+
         # Handle Gaia queries
         if "I_355_GAIADR3" in selected_catalogs:
             gaia_fields = catalogs.I_355_GAIADR3.keys()  # Get available fields from catalogs.py
@@ -2292,7 +2304,7 @@ class Star:
                         valid_queries.append(chosen_field)
                     else:
                         print("Invalid choice. Skipping this query for GAIA.")
-    
+
             if valid_queries:
                 try:
                     gaia_query = f"SELECT {', '.join(valid_queries)} FROM gaiadr3.gaia_source WHERE source_id = {self.star_name}"
@@ -2307,7 +2319,7 @@ class Star:
                                 results.append(("I_355_GAIADR3", q, value))
                 except Exception as e:
                     print(f"Error querying Gaia: {e}")
-    
+
         # Now we have a list of (Catalog, Query_Key, Query_Value)
         # Print a table with star name, catalog, query key, and value
         if results:
@@ -2319,7 +2331,7 @@ class Star:
 
     ########################################                Combined Spectra                   ########################################
 
-    def combine_fits_files(self, epoch_num=None,band = None,overwrite = False, backup = False, save = False):
+    def combine_fits_files(self, epoch_num=None, band=None, overwrite=False, backup=False, save=False):
         try:
             # for epoch_num in epoch_nums:
             try:
@@ -2333,7 +2345,8 @@ class Star:
                     raise FileNotFoundError("One or more FITS files for the specified epoch do not exist.")
 
                 # Create the COMBINED folder if it doesn't exist
-                combined_folder = os.path.join(os.path.dirname(os.path.dirname(self.get_file_path(epoch_num, band='NIR'))), 'COMBINED')
+                combined_folder = os.path.join(
+                    os.path.dirname(os.path.dirname(self.get_file_path(epoch_num, band='NIR'))), 'COMBINED')
                 # combined_folder = os.path.join(os.path.dirname(os.path.dirname(self.get_file_path(epoch_num, band='NIR'))), 'COMBINED2')
                 os.makedirs(combined_folder, exist_ok=True)
 
@@ -2351,11 +2364,11 @@ class Star:
                 uvb_snr = uvb_fits.data['SNR'][0]
                 uvb_red_flux = uvb_fits.data['FLUX_REDUCED'][0]
 
-                combined_wave, combined_flux, combined_snr, combined_flux_reduced,aligment_data = self._combine_spectra(
+                combined_wave, combined_flux, combined_snr, combined_flux_reduced, aligment_data = self._combine_spectra(
                     [uvb_wave, vis_wave, nir_wave],
                     [uvb_flux, vis_flux, nir_flux],
                     [uvb_snr, vis_snr, nir_snr],
-                    [uvb_red_flux,vis_red_flux,nir_red_flux]
+                    [uvb_red_flux, vis_red_flux, nir_red_flux]
                 )
 
                 combined_data = {
@@ -2372,8 +2385,8 @@ class Star:
                     # Create and save the new FITS file
                     combined_fits_path = os.path.join(combined_folder, f'combined_bands.fits')
                     self.create_combined_fits(nir_fits, combined_data, combined_fits_path)
-                    self.save_property('aligment_data',aligment_data, epoch_number = epoch_num, band = 'COMBINED',overwrite = True, backup = True)
-                    
+                    self.save_property('aligment_data', aligment_data, epoch_number=epoch_num, band='COMBINED',
+                                       overwrite=True, backup=True)
 
                 print(f'Combined FITS file saved at: {combined_fits_path}')
 
@@ -2384,14 +2397,14 @@ class Star:
         except Exception as e:
             print(f'An unexpected error occurred2: {e}')
 
-########################################                                   ########################################
+    ########################################                                   ########################################
 
-    def _combine_spectra(self, wave_list, flux_list, snr_list, flux_reduced_list,align = True):
+    def _combine_spectra(self, wave_list, flux_list, snr_list, flux_reduced_list, align=True):
         """
         Combine multiple spectra into a single spectrum by handling overlaps with different sampling,
         aligning mean fluxes before combination, and combining fluxes using the weighted SNR method.
         The alignment factor is applied to the entire spectrum, and the combined flux is used for subsequent overlaps.
-    
+
         Parameters:
         wave_list : list of numpy arrays
             List containing wavelength arrays from different spectra.
@@ -2401,7 +2414,7 @@ class Star:
             List containing SNR arrays corresponding to the wavelengths.
         flux_reduced_list : list of numpy arrays
             List containing FLUX_REDUCED arrays corresponding to the wavelengths.
-    
+
         Returns:
         combined_wave : numpy array
             Combined wavelength array.
@@ -2413,7 +2426,7 @@ class Star:
             Combined FLUX_REDUCED array.
         """
         import numpy as np
-    
+
         # Initialize the combined spectrum with the first spectrum
         combined_wave = wave_list[0]
         combined_flux = flux_list[0]
@@ -2421,34 +2434,44 @@ class Star:
         combined_flux_reduced = flux_reduced_list[0]
 
         aligment_data = {}
-    
+
         # Loop over the rest of the spectra
         for idx in range(1, len(wave_list)):
             wave_current = wave_list[idx]
             flux_current = flux_list[idx]
             snr_current = snr_list[idx]
             flux_reduced_current = flux_reduced_list[idx]
-    
+
             # Find overlap between combined_wave and wave_current
             overlap_start = max(combined_wave[0], wave_current[0])
             overlap_end = min(combined_wave[-1], wave_current[-1])
-    
+
             if overlap_start < overlap_end:
                 # There is an overlap
                 # Get indices for the overlapping region in both spectra
-                combined_overlap_indices = np.where((combined_wave >= overlap_start) & (combined_wave <= overlap_end))[0]
+                combined_overlap_indices = np.where((combined_wave >= overlap_start) & (combined_wave <= overlap_end))[
+                    0]
                 print(f'combined_overlap_indices is {combined_overlap_indices}')
                 current_overlap_indices = np.where((wave_current >= overlap_start) & (wave_current <= overlap_end))[0]
-                
+
                 # Determine which spectrum has finer sampling in the overlap
                 delta_combined = np.mean(np.diff(combined_wave[combined_overlap_indices]))
                 delta_current = np.mean(np.diff(wave_current[current_overlap_indices]))
 
-                mean_flux_combined = ut.robust_mean(combined_flux[combined_overlap_indices[int(len(combined_overlap_indices)*0.95):]],1)
-                std_flux_combined = ut.robust_std(combined_flux[combined_overlap_indices[int(len(combined_overlap_indices)*0.95):]],1)
-                mean_flux_current = ut.robust_mean(flux_current[np.concatenate((current_overlap_indices[int(len(current_overlap_indices)*0.96):],np.arange(current_overlap_indices[-1]+1,current_overlap_indices[-1]+1+int(len(current_overlap_indices)*0.01),1)))],1)
-                std_flux_current = ut.robust_std(flux_current[np.concatenate((current_overlap_indices[int(len(current_overlap_indices)*0.96):],np.arange(current_overlap_indices[-1]+1,current_overlap_indices[-1]+1+int(len(current_overlap_indices)*0.01),1)))],1)
-                print(f'first the mean_flux_combined was {mean_flux_combined} and mean_flux_current is {mean_flux_current}')
+                mean_flux_combined = ut.robust_mean(
+                    combined_flux[combined_overlap_indices[int(len(combined_overlap_indices) * 0.95):]], 1)
+                std_flux_combined = ut.robust_std(
+                    combined_flux[combined_overlap_indices[int(len(combined_overlap_indices) * 0.95):]], 1)
+                mean_flux_current = ut.robust_mean(flux_current[np.concatenate((current_overlap_indices[int(len(
+                    current_overlap_indices) * 0.96):], np.arange(current_overlap_indices[-1] + 1,
+                                                                  current_overlap_indices[-1] + 1 + int(
+                                                                      len(current_overlap_indices) * 0.01), 1)))], 1)
+                std_flux_current = ut.robust_std(flux_current[np.concatenate((current_overlap_indices[int(len(
+                    current_overlap_indices) * 0.96):], np.arange(current_overlap_indices[-1] + 1,
+                                                                  current_overlap_indices[-1] + 1 + int(
+                                                                      len(current_overlap_indices) * 0.01), 1)))], 1)
+                print(
+                    f'first the mean_flux_combined was {mean_flux_combined} and mean_flux_current is {mean_flux_current}')
 
                 # plt.plot(combined_wave,combined_flux, label = f'idx = {idx}')
 
@@ -2471,7 +2494,6 @@ class Star:
                     combined_snr *= alignment_factor
                     combined_flux_reduced *= alignment_factor
 
-    
                 if delta_combined <= delta_current:
                     # Combined spectrum has finer sampling
                     finer_wave = combined_wave[combined_overlap_indices]
@@ -2482,7 +2504,7 @@ class Star:
                     snr_coarser = snr_current[current_overlap_indices]
                     flux_reduced_finer = combined_flux_reduced[combined_overlap_indices]
                     flux_reduced_coarser = flux_reduced_current[current_overlap_indices]
-                    is_finer_combined =  True
+                    is_finer_combined = True
                 else:
                     # Current spectrum has finer sampling
                     finer_wave = wave_current[current_overlap_indices]
@@ -2493,13 +2515,13 @@ class Star:
                     snr_coarser = combined_snr[combined_overlap_indices]
                     flux_reduced_finer = flux_reduced_current[current_overlap_indices]
                     flux_reduced_coarser = combined_flux_reduced[combined_overlap_indices]
-                    is_finer_combined =  False
-    
+                    is_finer_combined = False
+
                 # Interpolate coarser spectrum onto finer_wave
                 interp_flux_coarser = np.interp(finer_wave, coarser_wave, flux_coarser)
                 interp_snr_coarser = np.interp(finer_wave, coarser_wave, snr_coarser)
                 interp_flux_reduced_coarser = np.interp(finer_wave, coarser_wave, flux_reduced_coarser)
-    
+
                 # Calculate mean fluxes and standard deviations in the overlap
                 mean_flux_finer = np.mean(flux_finer)
                 mean_flux_coarser = np.mean(interp_flux_coarser)
@@ -2507,46 +2529,52 @@ class Star:
                 std_flux_coarser = np.std(interp_flux_coarser)
 
                 print(f'mean_flux_finer is {mean_flux_finer} and mean_flux_coarser is {mean_flux_coarser}')
-                alignment_score = abs(mean_flux_combined - mean_flux_current) / np.sqrt(std_flux_combined**2 + std_flux_current**2)
-                alignment_score_interp = abs(mean_flux_finer - mean_flux_coarser) / np.sqrt(std_flux_finer**2 + std_flux_coarser**2)
-    
+                alignment_score = abs(mean_flux_combined - mean_flux_current) / np.sqrt(
+                    std_flux_combined ** 2 + std_flux_current ** 2)
+                alignment_score_interp = abs(mean_flux_finer - mean_flux_coarser) / np.sqrt(
+                    std_flux_finer ** 2 + std_flux_coarser ** 2)
+
                 # Combine fluxes using weighted SNR method
                 weights_finer = snr_finer ** 2
                 weights_coarser = interp_snr_coarser ** 2
                 total_weights = weights_finer + weights_coarser
-    
-                combined_flux_overlap = (flux_finer * weights_finer + interp_flux_coarser * weights_coarser) / total_weights
+
+                combined_flux_overlap = (
+                                                    flux_finer * weights_finer + interp_flux_coarser * weights_coarser) / total_weights
                 combined_snr_overlap = np.sqrt(total_weights)
-                combined_flux_reduced_overlap = (flux_reduced_finer * weights_finer + interp_flux_reduced_coarser * weights_coarser) / total_weights
-    
+                combined_flux_reduced_overlap = (
+                                                            flux_reduced_finer * weights_finer + interp_flux_reduced_coarser * weights_coarser) / total_weights
+
                 # Update combined spectrum
                 if delta_combined <= delta_current:
                     # Replace overlapping region in combined spectrum
                     combined_flux[combined_overlap_indices] = combined_flux_overlap
                     combined_snr[combined_overlap_indices] = combined_snr_overlap
                     combined_flux_reduced[combined_overlap_indices] = combined_flux_reduced_overlap
-    
+
                     # Append non-overlapping part of current spectrum
                     non_overlap_indices_current = np.where(wave_current > overlap_end)[0]
                     if non_overlap_indices_current.size > 0:
                         combined_wave = np.concatenate((combined_wave, wave_current[non_overlap_indices_current]))
                         combined_flux = np.concatenate((combined_flux, flux_current[non_overlap_indices_current]))
                         combined_snr = np.concatenate((combined_snr, snr_current[non_overlap_indices_current]))
-                        combined_flux_reduced = np.concatenate((combined_flux_reduced, flux_reduced_current[non_overlap_indices_current]))
+                        combined_flux_reduced = np.concatenate(
+                            (combined_flux_reduced, flux_reduced_current[non_overlap_indices_current]))
                 else:
                     # Replace overlapping region in current spectrum
                     flux_current[current_overlap_indices] = combined_flux_overlap
                     snr_current[current_overlap_indices] = combined_snr_overlap
                     flux_reduced_current[current_overlap_indices] = combined_flux_reduced_overlap
-    
+
                     # Append non-overlapping part of combined spectrum
                     non_overlap_indices_combined = np.where(combined_wave < overlap_start)[0]
                     if non_overlap_indices_combined.size > 0:
                         wave_current = np.concatenate((combined_wave[non_overlap_indices_combined], wave_current))
                         flux_current = np.concatenate((combined_flux[non_overlap_indices_combined], flux_current))
                         snr_current = np.concatenate((combined_snr[non_overlap_indices_combined], snr_current))
-                        flux_reduced_current = np.concatenate((combined_flux_reduced[non_overlap_indices_combined], flux_reduced_current))
-    
+                        flux_reduced_current = np.concatenate(
+                            (combined_flux_reduced[non_overlap_indices_combined], flux_reduced_current))
+
                     # Set combined arrays to current
                     combined_wave = wave_current
                     combined_flux = flux_current
@@ -2559,18 +2587,19 @@ class Star:
                 combined_flux = combined_flux[sorted_indices]
                 combined_snr = combined_snr[sorted_indices]
                 combined_flux_reduced = combined_flux_reduced[sorted_indices]
-    
+
                 # Print alignment information
                 print(f"Aligned spectra in overlap between {overlap_start:.2f} and {overlap_end:.2f} Å.")
-                print(f"Alignment factor: {alignment_factor:.4f}, Alignment score: {alignment_score:.4f} and Alignment scoreafter interpolation: {alignment_score_interp:.4f}")
-    
+                print(
+                    f"Alignment factor: {alignment_factor:.4f}, Alignment score: {alignment_score:.4f} and Alignment scoreafter interpolation: {alignment_score_interp:.4f}")
+
             else:
                 # No overlap; simply concatenate
                 combined_wave = np.concatenate((combined_wave, wave_current))
                 combined_flux = np.concatenate((combined_flux, flux_current))
                 combined_snr = np.concatenate((combined_snr, snr_current))
                 combined_flux_reduced = np.concatenate((combined_flux_reduced, flux_reduced_current))
-    
+
                 # Sort the combined arrays
                 sorted_indices = np.argsort(combined_wave)
                 combined_wave = combined_wave[sorted_indices]
@@ -2578,30 +2607,31 @@ class Star:
                 combined_snr = combined_snr[sorted_indices]
                 combined_flux_reduced = combined_flux_reduced[sorted_indices]
 
-            aligment_data_tmp = {'Alignment_factor' : alignment_factor, 'Initial_Alignment_score' : alignment_score, 'End_Alignment_score' : alignment_score_interp, 'Desc' : 'Alignment_factor is the factor one side of the spectra was multiplied by to make it consistent. Initial_Alignment_score is the score before the fixes. below 1 means it was already consistent, above means it wasnt. End_Alignment_score is the score after the fix, should be way closer to 0'}
+            aligment_data_tmp = {'Alignment_factor': alignment_factor, 'Initial_Alignment_score': alignment_score,
+                                 'End_Alignment_score': alignment_score_interp,
+                                 'Desc': 'Alignment_factor is the factor one side of the spectra was multiplied by to make it consistent. Initial_Alignment_score is the score before the fixes. below 1 means it was already consistent, above means it wasnt. End_Alignment_score is the score after the fix, should be way closer to 0'}
             aligment_data[f'overlap_{idx}'] = aligment_data_tmp
-        
-    
-        return combined_wave, combined_flux, combined_snr, combined_flux_reduced,aligment_data
 
-########################################                                   ########################################
+        return combined_wave, combined_flux, combined_snr, combined_flux_reduced, aligment_data
+
+    ########################################                                   ########################################
 
     def create_combined_fits(self, nir_fits, combined_data, combined_fits_path):
         # Extract all columns from NIR FITS file
         nir_data = nir_fits.data
         col_names = nir_data.columns.names
-    
+
         # Prepare fits columns using combined data
         columns = []
         nelem = len(combined_data['WAVE'])
-    
+
         for col_name in col_names:
             # Get the unit from the original NIR FITS
             col_unit = nir_data.columns[col_name].unit
-    
+
             # Determine the data type and format character
             original_format = nir_data.columns[col_name].format
-    
+
             if 'D' in original_format:
                 format_char = 'D'  # Double-precision float
                 fill_value = np.nan
@@ -2615,10 +2645,10 @@ class Star:
                 # Handle other data types as needed
                 format_char = 'D'  # Default to double-precision float
                 fill_value = np.nan
-    
+
             # Set the format to include the correct repeat count
             col_format = f'{nelem}{format_char}'
-    
+
             # Get the combined data array
             if col_name in combined_data:
                 # Ensure data_array is a list containing the array
@@ -2626,7 +2656,7 @@ class Star:
             else:
                 # Fill with appropriate fill value
                 data_array = [np.full(nelem, fill_value)]
-    
+
             # Create the fits.Column without the 'dim' parameter
             column = fits.Column(
                 name=col_name,
@@ -2640,10 +2670,10 @@ class Star:
         hdu = fits.BinTableHDU.from_columns(columns)
 
         # Copy and update header
-        
+
         hdu.header['DISPELEM'] = 'COMBINED'
         hdu.header['NELEM'] = nelem
-        
+
         # Write the new HDU to a FITS file
         hdu.writeto(combined_fits_path, overwrite=True)
 
@@ -2651,19 +2681,19 @@ class Star:
 
     def _local_snr(self,
                    flux: np.ndarray,
-                   idx:  np.ndarray,
+                   idx: np.ndarray,
                    half_win: int = 20,
                    ) -> np.ndarray:
         """
         Per-pixel SNR = 1 / std(window)  **only for the indices in `idx`.**
         Pixels not in `idx` should never be passed in.
         """
-        snr   = np.empty(idx.size, dtype=float)
-        n     = len(flux)
-        h     = half_win
+        snr = np.empty(idx.size, dtype=float)
+        n = len(flux)
+        h = half_win
         for k, i in enumerate(idx):
-            lo   = max(0, i - h)
-            hi   = min(n, i + h + 1)
+            lo = max(0, i - h)
+            hi = min(n, i + h + 1)
             sigma = np.std(flux[lo:hi])
             snr[k] = 1.0 / sigma if sigma > 0 else np.nan
         return snr
@@ -2674,11 +2704,11 @@ class Star:
 
     def combine_cleaned_bands(
             self,
-            wl_list:   List[np.ndarray],
+            wl_list: List[np.ndarray],
             flux_list: List[np.ndarray],
             trash,
-            edge_frac = 0.05,
-            window_size = 40
+            edge_frac=0.05,
+            window_size=40
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Parameters
@@ -2697,16 +2727,16 @@ class Star:
         wave = wl_list[0].copy()
         flux = flux_list[0].copy()
         half_win = int(window_size / 2)
-        snr  = np.full_like(flux, np.nan)           # no overlap yet ⇒ NaN
+        snr = np.full_like(flux, np.nan)  # no overlap yet ⇒ NaN
 
         order = np.argsort(wave)
         wave, flux, snr = wave[order], flux[order], snr[order]
 
         # ---------- iterate over remaining bands -------------------------
         for wl, fl in zip(wl_list[1:], flux_list[1:]):
-            wl  = wl.copy()
-            fl  = fl.copy()
-            sn  = np.full_like(fl, np.nan)
+            wl = wl.copy()
+            fl = fl.copy()
+            sn = np.full_like(fl, np.nan)
 
             # overlap limits
             left, right = max(wave[0], wl[0]), min(wave[-1], wl[-1])
@@ -2715,66 +2745,66 @@ class Star:
             if left >= right:
                 wave = np.concatenate((wave, wl))
                 flux = np.concatenate((flux, fl))
-                snr  = np.concatenate((snr,  sn))
+                snr = np.concatenate((snr, sn))
                 order = np.argsort(wave)
                 wave, flux, snr = wave[order], flux[order], snr[order]
                 continue
 
             # indices inside overlap
             idx_c = np.where((wave >= left) & (wave <= right))[0]
-            idx_n = np.where((wl   >= left) & (wl   <= right))[0]
+            idx_n = np.where((wl >= left) & (wl <= right))[0]
 
             # ---------- continuum alignment (right-edge slice) ----------
             tail_c = idx_c[-max(1, int(len(idx_c) * edge_frac)):]
             tail_n = idx_n[-max(1, int(len(idx_n) * edge_frac)):]
-            scale  = np.median(flux[tail_c]) / np.median(fl[tail_n])
+            scale = np.median(flux[tail_c]) / np.median(fl[tail_n])
             fl *= scale
 
             # ---------- SNR **only** in the overlap ---------------------
-            snr_c = self._local_snr(flux, idx_c,half_win)
-            snr_n = self._local_snr(fl,   idx_n,half_win)
-            plt.plot(wave[idx_c],snr_c,label = 'snr_c')
-            plt.plot(wl[idx_n],snr_n,label = 'snr_n')
+            snr_c = self._local_snr(flux, idx_c, half_win)
+            snr_n = self._local_snr(fl, idx_n, half_win)
+            plt.plot(wave[idx_c], snr_c, label='snr_c')
+            plt.plot(wl[idx_n], snr_n, label='snr_n')
             plt.legend()
             plt.show()
 
             # ---------- choose finer grid in the overlap ----------------
             dlam_c = np.median(np.diff(wave[idx_c]))
-            dlam_n = np.median(np.diff(wl  [idx_n]))
+            dlam_n = np.median(np.diff(wl[idx_n]))
             new_is_finer = dlam_n < dlam_c - 1e-12
 
             if new_is_finer:
-                fine_wl  = wl[idx_n]
-                fine_f   = fl[idx_n]
-                fine_sn  = snr_n
+                fine_wl = wl[idx_n]
+                fine_f = fl[idx_n]
+                fine_sn = snr_n
                 coarse_f = np.interp(fine_wl, wave[idx_c], flux[idx_c])
-                coarse_sn= np.interp(fine_wl, wave[idx_c], snr[idx_c])
-                w_fine, w_coarse = fine_sn**2, coarse_sn**2
-                blended_flux = (fine_f*w_fine + coarse_f*w_coarse) / (w_fine + w_coarse)
-                blended_snr  = np.sqrt(w_fine + w_coarse)
+                coarse_sn = np.interp(fine_wl, wave[idx_c], snr[idx_c])
+                w_fine, w_coarse = fine_sn ** 2, coarse_sn ** 2
+                blended_flux = (fine_f * w_fine + coarse_f * w_coarse) / (w_fine + w_coarse)
+                blended_snr = np.sqrt(w_fine + w_coarse)
                 fl[idx_n] = blended_flux
                 sn[idx_n] = blended_snr
                 # append non-overlap part of new band
-                keep  = wl > right
-                wave  = np.concatenate((wave, wl[keep]))
-                flux  = np.concatenate((flux, fl[keep]))
-                snr   = np.concatenate((snr,  sn[keep]))
+                keep = wl > right
+                wave = np.concatenate((wave, wl[keep]))
+                flux = np.concatenate((flux, fl[keep]))
+                snr = np.concatenate((snr, sn[keep]))
             else:
-                fine_wl  = wave[idx_c]
-                fine_f   = flux[idx_c]
-                fine_sn  = snr_c
+                fine_wl = wave[idx_c]
+                fine_f = flux[idx_c]
+                fine_sn = snr_c
                 coarse_f = np.interp(fine_wl, wl[idx_n], fl[idx_n])
-                coarse_sn= np.interp(fine_wl, wl[idx_n], sn[idx_n])
-                w_fine, w_coarse = fine_sn**2, coarse_sn**2
-                blended_flux = (fine_f*w_fine + coarse_f*w_coarse) / (w_fine + w_coarse)
-                blended_snr  = np.sqrt(w_fine + w_coarse)
-                flux[idx_c]  = blended_flux
-                snr[idx_c]   = blended_snr
+                coarse_sn = np.interp(fine_wl, wl[idx_n], sn[idx_n])
+                w_fine, w_coarse = fine_sn ** 2, coarse_sn ** 2
+                blended_flux = (fine_f * w_fine + coarse_f * w_coarse) / (w_fine + w_coarse)
+                blended_snr = np.sqrt(w_fine + w_coarse)
+                flux[idx_c] = blended_flux
+                snr[idx_c] = blended_snr
                 # prepend part of old combo < left
-                keep  = wave < left
-                wl    = np.concatenate((wave[keep], wl))
-                fl    = np.concatenate((flux[keep], fl))
-                sn    = np.concatenate((snr [keep], sn))
+                keep = wave < left
+                wl = np.concatenate((wave[keep], wl))
+                fl = np.concatenate((flux[keep], fl))
+                sn = np.concatenate((snr[keep], sn))
                 wave, flux, snr = wl, fl, sn
 
             # ---------- keep global arrays sorted -----------------------
@@ -2784,7 +2814,7 @@ class Star:
         return wave, flux, snr
 
     def combine_cleaned_bands_old(
-            self,wl_list, flux_list, snr_list=None,
+            self, wl_list, flux_list, snr_list=None,
             edge_frac=0.05, snr_window=41
     ):
         """
@@ -2838,7 +2868,6 @@ class Star:
             # ---------- continuum alignment ----------------------------
             tail_c = idx_c[-max(1, int(len(idx_c) * edge_frac)):]
             tail_n = idx_n[-max(1, int(len(idx_n) * edge_frac)):]
-
 
             # ---------- pick finer grid in overlap ---------------------
             dlam_c = np.median(np.diff(wave[idx_c]))
@@ -2913,7 +2942,6 @@ class Star:
             If True, create a backup before overwriting.
         """
 
-
         # 1) determine epochs
         if epoch_nums is None:
             epoch_nums = self.get_all_epoch_numbers()
@@ -2922,7 +2950,7 @@ class Star:
 
         for epoch in epoch_nums:
             # 2) load each band’s cleaned_normalized_flux
-            wl_list, fl_list,snr_list = [], [], []
+            wl_list, fl_list, snr_list = [], [], []
             for b in bands:
                 data = self.load_property('cleaned_normalized_flux', epoch, b)
                 if (data is None
@@ -2938,8 +2966,7 @@ class Star:
                 # 4)
                 flux_reduced_list = [np.ones_like(fl) for fl in fl_list]
                 comb_wl, comb_flux, comb_snr, _, align_info = self._combine_spectra(
-                    wl_list, fl_list, snr_list, flux_reduced_list, align = False)
-
+                    wl_list, fl_list, snr_list, flux_reduced_list, align=False)
 
                 # 5) save to COMBINED
                 out = {'wavelengths': comb_wl,
@@ -2955,12 +2982,12 @@ class Star:
 
     ########################################               CCF                 ########################################
 
-    def combined_normalized_template(self,epoch_num,band = None):
-        fits_file= self.load_observation(1,'COMBINED')
+    def combined_normalized_template(self, epoch_num, band=None):
+        fits_file = self.load_observation(1, 'COMBINED')
         initial_template = fits_file.data['FLUX'][0]
         template_wave = fits_file.data['WAVE'][0]
 
-########################################                                ########################################
+    ########################################                                ########################################
 
     # def CCF(self,epoch_num,band = None):
     #     if epoch_num == 1:
@@ -2970,8 +2997,7 @@ class Star:
     #     template_wave = fits_file.data['WAVE'][0]
     #     CCF = CCFclass(
 
-
-########################################                cleaning data using 2D images                ########################################
+    ########################################                cleaning data using 2D images                ########################################
 
     def clean_flux_and_normalize(self, epoch_num, band, bottom_spacial=None, top_spacial=None, exclude_spacial=None):
         """
@@ -3012,7 +3038,7 @@ class Star:
 
         # Crop the image to the specified region
         image_data_central = image_data[bottom_spacial:top_spacial, :]
-        spacial_coordinate = np.arange(0,len(image_data),1)[bottom_spacial:top_spacial]
+        spacial_coordinate = np.arange(0, len(image_data), 1)[bottom_spacial:top_spacial]
         print(f'spacial_coordinate: {spacial_coordinate}')
 
         # Sum the flux along the columns
@@ -3058,28 +3084,28 @@ class Star:
             plt.axhline(exclude_end, linestyle="dotted", color="red", label="Excluded End")
             plt.legend()
             # plt.show()
-    
+
         # Load external normalized flux for comparison (same band)
         external_data = self.load_property('normalized_flux', epoch_num, band='COMBINED')
         external_normalized_flux = external_data['normalized_flux']
         external_wavelengths = external_data['wavelengths']
-    
+
         # Filter external data to match the wavelength range of the current band
         mask_band = (external_wavelengths >= wavelengths_2D.min()) & (external_wavelengths <= wavelengths_2D.max())
         external_normalized_flux_band = external_normalized_flux[mask_band]
         external_wavelengths_band = external_wavelengths[mask_band]
-    
+
         # Interpolate `normalized_summed_flux` to match the resolution of `external_normalized_flux_band`
         normalized_summed_flux_resampled = np.interp(external_wavelengths_band, wavelengths_2D, normalized_summed_flux)
-    
+
         # Calculate the difference and relative difference
         flux_difference = normalized_summed_flux_resampled - external_normalized_flux_band
         relative_difference = flux_difference / external_normalized_flux_band
-    
+
         # Plot summed flux
         plt.figure(figsize=(12, 6))
         plt.plot(wavelengths_2D, summed_flux, label=f'Summed Flux ({band})', color='blue')
-        plt.scatter(anchor_points_in_range,selected_flux, label = 'anchor points', color = 'red')
+        plt.scatter(anchor_points_in_range, selected_flux, label='anchor points', color='red')
         # plt.plot(external_wavelengths_band, external_normalized_flux_band, label='External Flux', color='orange', alpha=0.7)
         plt.xlabel('Wavelength (nm)')
         plt.ylabel('summed Flux')
@@ -3101,563 +3127,44 @@ class Star:
         plt.legend()
         plt.grid(True)
         plt.show()
-    
-        
+
         # Plot the normalized flux comparison
         plt.figure(figsize=(12, 6))
-        plt.plot(external_wavelengths_band, normalized_summed_flux_resampled, label=f'Cleaned Normalized Summed Flux ({band})', color='blue')
-        plt.plot(external_wavelengths_band, external_normalized_flux_band, label='Non-Cleaned Normalized Flux', color='orange', alpha=0.7)
+        plt.plot(external_wavelengths_band, normalized_summed_flux_resampled,
+                 label=f'Cleaned Normalized Summed Flux ({band})', color='blue')
+        plt.plot(external_wavelengths_band, external_normalized_flux_band, label='Non-Cleaned Normalized Flux',
+                 color='orange', alpha=0.7)
         plt.xlabel('Wavelength (nm)')
         plt.ylabel('Normalized Flux')
         plt.title(f'Normalized Flux Comparison for {self.star_name} band {band} (Epoch {epoch_num})')
         plt.legend()
         plt.grid(True)
         plt.show()
-    
+
         # Plot the differences
         plt.figure(figsize=(12, 6))
         plt.plot(external_wavelengths_band, flux_difference, label='Flux Difference', color='red')
         plt.xlabel('Wavelength (nm)')
         plt.ylabel('Flux Difference')
-        plt.title(f'Flux Difference (Normalized Summed Flux - External) for {self.star_name} band {band} (Epoch {epoch_num})')
+        plt.title(
+            f'Flux Difference (Normalized Summed Flux - External) for {self.star_name} band {band} (Epoch {epoch_num})')
         plt.legend()
         plt.grid(True)
         plt.show()
-    
+
         # Plot the relative differences
         plt.figure(figsize=(12, 6))
         plt.plot(external_wavelengths_band, relative_difference, label='Relative Difference', color='purple')
-        plt.plot(external_wavelengths_band, np.ones(len(external_wavelengths_band))/10, linestyle = 'dashed', color = 'red')
-        plt.plot(external_wavelengths_band, -np.ones(len(external_wavelengths_band))/10, linestyle = 'dashed', color = 'red')
+        plt.plot(external_wavelengths_band, np.ones(len(external_wavelengths_band)) / 10, linestyle='dashed',
+                 color='red')
+        plt.plot(external_wavelengths_band, -np.ones(len(external_wavelengths_band)) / 10, linestyle='dashed',
+                 color='red')
         plt.xlabel('Wavelength (nm)')
         plt.ylabel('Relative Difference')
-        plt.title(f'Relative Flux Difference (Diff / External Flux) for {self.star_name} band {band} (Epoch {epoch_num})')
+        plt.title(
+            f'Relative Flux Difference (Diff / External Flux) for {self.star_name} band {band} (Epoch {epoch_num})')
         plt.legend()
         plt.grid(True)
         plt.show()
-    
+
         return normalized_summed_flux_resampled, external_wavelengths_band, (bottom_spacial, top_spacial)
-
-    # def clean_flux_and_normalize_interactive_old(self, epoch_num, band, bottom_spacial=None, top_spacial=None, include_spacial=None):
-    #     """
-    #     Cleans the 2D flux image by selecting a 'clean' vertical region interactively using sliders,
-    #     normalizes the flux, and compares with external normalized data.
-    #     """
-    #
-    #     # Load the 2D image
-    #     fits_file_2D = self.load_2D_observation(epoch_num, band)
-    #     image_data = fits_file_2D.primary_data
-    #
-    #     # Get wavelengths from the 2D data
-    #     fits_file_1D = self.load_observation(epoch_num, band)
-    #     wavelengths_2D = fits_file_1D.data['WAVE'][0]
-    #
-    #     # Detect spatial limits if not provided
-    #     if bottom_spacial is None or top_spacial is None:
-    #         if band == 'NIR':
-    #             bottom_spacial, top_spacial = (-52, -24)
-    #         else:
-    #             bottom_spacial, top_spacial = (-68, -30)
-    #     print(f"The top limit is: {top_spacial}, and the bottom limit is: {bottom_spacial}")
-    #
-    #     # Crop the image to the specified region
-    #     image_data_central = image_data[bottom_spacial:top_spacial, :]
-    #     spacial_coordinate = np.arange(0, len(image_data), 1)[bottom_spacial:top_spacial]
-    #     print(f'spacial_coordinate: {spacial_coordinate}')
-    #
-    #     # Initial include_spacial guess if not provided
-    #     if include_spacial is None:
-    #         include_spacial = (0, image_data_central.shape[0])
-    #
-    #     # Load normalization and external data
-    #     anchor_points = self.load_property('norm_anchor_wavelengths', epoch_num, band='COMBINED')
-    #     external_data = self.load_property('normalized_flux', epoch_num, band='COMBINED')
-    #     external_normalized_flux = external_data['normalized_flux']
-    #     external_wavelengths = external_data['wavelengths']
-    #
-    #     mask_band = (external_wavelengths >= wavelengths_2D.min()) & (external_wavelengths <= wavelengths_2D.max())
-    #     external_normalized_flux_band = external_normalized_flux[mask_band]
-    #     external_wavelengths_band = external_wavelengths[mask_band]
-    #     print(f'external_wavelengths_band is : {external_wavelengths_band}')
-    #
-    #     # Create figure
-    #     # Increase size and give space at bottom.
-    #     fig = plt.figure(figsize=(12, 9))
-    #     # Adjust subplots to have more space around
-    #     # More bottom space for sliders and button, more spacing between subplots
-    #     fig.subplots_adjust(left=0.08, right=0.95, top=0.92, bottom=0.25, wspace=0.4, hspace=0.6)
-    #
-    #     # Axes for the 2D image
-    #     ax_image = plt.subplot2grid((3, 2), (0, 0), rowspan=2)
-    #     p2D.Plot2DImage(
-    #         image_data_central,
-    #         wavelengths_2D,
-    #         band,
-    #         title=f"2D Flux Image for {self.star_name} Band {band} (Epoch {epoch_num})",
-    #         ValMin=-600,
-    #         ValMax=600,
-    #         see_all=True,
-    #         ax=ax_image
-    #     )
-    #     ax_image.set_title("Adjust sliders below to select star region", fontsize=12)
-    #
-    #     # Create the horizontal lines for include_spacial
-    #     line_incl_start = ax_image.axhline(include_spacial[0], color='red', linestyle='--')
-    #     line_incl_end = ax_image.axhline(include_spacial[1], color='red', linestyle='--')
-    #
-    #     # Axes for the summed flux vertically
-    #     ax_summed_vertical = plt.subplot2grid((3, 2), (0, 1))
-    #
-    #     # Axes for the summed flux horizontally
-    #     ax_summed_horizontal = plt.subplot2grid((3, 2), (1, 1))
-    #
-    #     # Axes for normalized flux comparison & difference
-    #     ax_norm = plt.subplot2grid((3, 2), (2, 0))
-    #     ax_diff = plt.subplot2grid((3, 2), (2, 1))
-    #
-    #     # Set initial y-limits for normalized flux and difference
-    #     ax_norm.set_ylim(-3, 5)
-    #     ax_diff.set_ylim(-3, 5)
-    #
-    #     # Position sliders and button below the plots
-    #     slider_ax_start = plt.axes([0.1, 0.14, 0.35, 0.03])
-    #     slider_ax_end = plt.axes([0.55, 0.14, 0.35, 0.03])
-    #     finish_ax = plt.axes([0.45, 0.06, 0.1, 0.05])
-    #
-    #     # Create sliders
-    #     slider_start = Slider(slider_ax_start, 'Include Start', 0, image_data_central.shape[0]-1, valinit=include_spacial[0], valstep=1)
-    #     slider_end = Slider(slider_ax_end, 'Include End', 1, image_data_central.shape[0], valinit=include_spacial[1], valstep=1)
-    #
-    #     finish_button = Button(finish_ax, 'Finish', color='lightgoldenrodyellow', hovercolor='0.975')
-    #     finished = {'value': False}
-    #
-    #     # Lines (for updating)
-    #     line_summed_vertical, = ax_summed_vertical.plot([], [], color='blue', label='Summed Flux (vertical)')
-    #     scatter_anchors = ax_summed_vertical.scatter([], [], color='red', label='Anchor Points')
-    #     line_summed_horizontal, = ax_summed_horizontal.plot([], [], color='blue', label='Summed Flux (horizontal)')
-    #     line_norm_cleaned, = ax_norm.plot([], [], color='blue', label='Cleaned Normalized Summed Flux')
-    #     line_norm_external, = ax_norm.plot([], [], color='orange', alpha=0.7, label='Non-Cleaned Normalized Flux')
-    #     line_diff, = ax_diff.plot([], [], color='red', label='Flux Difference')
-    #     line_reldiff, = ax_diff.plot([], [], color='purple', label='Relative Difference')
-    #
-    #     # Reference lines for relative difference
-    #     ax_diff.axhline(0.1, color='red', linestyle='dashed')
-    #     ax_diff.axhline(-0.1, color='red', linestyle='dashed')
-    #
-    #     ax_summed_vertical.set_xlabel('Wavelength (nm)')
-    #     ax_summed_vertical.set_ylabel('Summed Flux')
-    #     ax_summed_vertical.set_title('Vertical Summed Flux', fontsize=10)
-    #     ax_summed_vertical.legend(fontsize=9)
-    #     ax_summed_vertical.grid(True)
-    #
-    #     ax_summed_horizontal.set_xlabel('Spatial Coordinate')
-    #     ax_summed_horizontal.set_ylabel('Summed Flux')
-    #     ax_summed_horizontal.set_title('Horizontal Summed Flux', fontsize=10)
-    #     ax_summed_horizontal.legend(fontsize=9)
-    #     ax_summed_horizontal.grid(True)
-    #
-    #     ax_norm.set_xlabel('Wavelength (nm)')
-    #     ax_norm.set_ylabel('Normalized Flux')
-    #     ax_norm.set_title('Normalized Flux Comparison', fontsize=10)
-    #     ax_norm.legend(fontsize=9)
-    #     ax_norm.grid(True)
-    #
-    #     ax_diff.set_xlabel('Wavelength (nm)')
-    #     ax_diff.set_ylabel('Difference')
-    #     ax_diff.set_title('Flux & Relative Difference', fontsize=10)
-    #     ax_diff.legend(fontsize=9)
-    #     ax_diff.grid(True)
-    #
-    #     def update_plots(val):
-    #         # Get current slider values
-    #         include_start = int(slider_start.val)
-    #         include_end = int(slider_end.val)
-    #         if include_end <= include_start:
-    #             return
-    #
-    #         # Update horizontal lines on the 2D image
-    #         line_incl_start.set_ydata([include_start, include_start])
-    #         line_incl_end.set_ydata([include_end, include_end])
-    #
-    #         image_data_included = image_data_central[include_start:include_end, :]
-    #         included_spacial_coordinate = spacial_coordinate[include_start:include_end]
-    #
-    #         summed_flux = np.sum(image_data_included, axis=0)
-    #         anchor_points_in_range = anchor_points[(anchor_points >= wavelengths_2D.min()) & (anchor_points <= wavelengths_2D.max())]
-    #         closest_indices = [np.abs(wavelengths_2D - ap).argmin() for ap in anchor_points_in_range]
-    #         selected_flux = [ut.robust_mean(summed_flux[max(0,index - 10):index + 10], 1) for index in closest_indices]
-    #
-    #         if len(anchor_points_in_range) > 1:
-    #             continuum_flux_interpolated = np.interp(wavelengths_2D, anchor_points_in_range, selected_flux)
-    #         else:
-    #             continuum_flux_interpolated = np.full_like(wavelengths_2D, selected_flux[0] if selected_flux else 1.0)
-    #
-    #         normalized_summed_flux = summed_flux / continuum_flux_interpolated
-    #         normalized_summed_flux_resampled = np.interp(external_wavelengths_band, wavelengths_2D, normalized_summed_flux)
-    #
-    #         flux_difference = normalized_summed_flux_resampled - external_normalized_flux_band
-    #         relative_difference = flux_difference / external_normalized_flux_band
-    #
-    #         # Update vertical summed flux
-    #         line_summed_vertical.set_xdata(wavelengths_2D)
-    #         line_summed_vertical.set_ydata(summed_flux)
-    #         scatter_anchors.set_offsets(np.c_[anchor_points_in_range, selected_flux] if len(selected_flux)>0 else [])
-    #         ax_summed_vertical.relim()
-    #         ax_summed_vertical.autoscale_view()
-    #
-    #         # Update horizontal summed flux
-    #         line_summed_horizontal.set_xdata(included_spacial_coordinate)
-    #         line_summed_horizontal.set_ydata(np.sum(image_data_included, axis=1))
-    #         ax_summed_horizontal.relim()
-    #         ax_summed_horizontal.autoscale_view()
-    #
-    #         # Update normalized flux and differences (fixed y-limits, no autoscale)
-    #         line_norm_cleaned.set_xdata(external_wavelengths_band)
-    #         line_norm_cleaned.set_ydata(normalized_summed_flux_resampled)
-    #         line_norm_external.set_xdata(external_wavelengths_band)
-    #         line_norm_external.set_ydata(external_normalized_flux_band)
-    #
-    #         line_diff.set_xdata(external_wavelengths_band)
-    #         line_diff.set_ydata(flux_difference)
-    #         line_reldiff.set_xdata(external_wavelengths_band)
-    #         line_reldiff.set_ydata(relative_difference)
-    #
-    #         fig.canvas.draw_idle()
-    #
-    #     def finish_callback(event):
-    #         finished['value'] = True
-    #         plt.close(fig)  # Close the figure to exit the loop
-    #
-    #     finish_button.on_clicked(finish_callback)
-    #
-    #     # Initial update
-    #     update_plots(None)
-    #     slider_start.on_changed(update_plots)
-    #     slider_end.on_changed(update_plots)
-    #
-    #     plt.show()
-    #
-    #     # After the window is closed, return the final chosen values
-    #     final_include_spacial = (int(slider_start.val), int(slider_end.val))
-    #
-    #     # Recompute final arrays one last time for the returned values
-    #     image_data_included = image_data_central[final_include_spacial[0]:final_include_spacial[1], :]
-    #     summed_flux = np.sum(image_data_included, axis=0)
-    #     anchor_points_in_range = anchor_points[(anchor_points >= wavelengths_2D.min()) & (anchor_points <= wavelengths_2D.max())]
-    #     closest_indices = [np.abs(wavelengths_2D - ap).argmin() for ap in anchor_points_in_range]
-    #     selected_flux = [ut.robust_mean(summed_flux[max(0,index - 10):index + 10], 1) for index in closest_indices]
-    #
-    #     if len(anchor_points_in_range) > 1:
-    #         continuum_flux_interpolated = np.interp(wavelengths_2D, anchor_points_in_range, selected_flux)
-    #     else:
-    #         continuum_flux_interpolated = np.full_like(wavelengths_2D, selected_flux[0] if selected_flux else 1.0)
-    #
-    #     normalized_summed_flux = summed_flux / continuum_flux_interpolated
-    #     normalized_summed_flux_resampled = np.interp(external_wavelengths_band, wavelengths_2D, normalized_summed_flux)
-    #
-    #     return normalized_summed_flux_resampled, external_wavelengths_band, (bottom_spacial, top_spacial), final_include_spacial
-
-    # def clean_flux_and_normalize_interactive(self, epoch_num, band, bottom_spacial=None, top_spacial=None, include_spacial=None):
-    #     """
-    #     Cleans the 2D flux image by selecting a 'clean' vertical region interactively using sliders,
-    #     normalizes the flux, and compares with external normalized data.
-    #
-    #     Now, include_spacial is treated as absolute spatial coordinates in the full image,
-    #     not relative to bottom_spacial/top_spacial.
-    #     """
-    #
-    #     # Load the 2D image
-    #     fits_file_2D = self.load_2D_observation(epoch_num, band)
-    #     image_data = fits_file_2D.primary_data
-    #
-    #     # Get wavelengths from the 2D data
-    #     fits_file_1D = self.load_observation(epoch_num, band)
-    #     wavelengths_2D = fits_file_1D.data['WAVE'][0]
-    #
-    #     # Detect spatial limits if not provided
-    #     if bottom_spacial is None or top_spacial is None:
-    #         if band == 'NIR':
-    #             bottom_spacial, top_spacial = (-52, -24)
-    #             bottom_spacial, top_spacial = (-52, -24)
-    #         else:
-    #             bottom_spacial, top_spacial = (-68, -30)
-    #             bottom_spacial, top_spacial = (21, 76)
-    #     print(f"The top limit is: {top_spacial}, and the bottom limit is: {bottom_spacial}")
-    #
-    #     # # Convert negative indices
-    #     # height = image_data.shape[0]
-    #     # if bottom_spacial < 0:
-    #     #     bottom_spacial = height + bottom_spacial
-    #     # if top_spacial < 0:
-    #     #     top_spacial = height + top_spacial
-    #     # if top_spacial <= bottom_spacial:
-    #     #     top_spacial = bottom_spacial + 1
-    #
-    #     # Crop the image to the specified region
-    #     image_data_central = image_data[bottom_spacial:top_spacial, :]
-    #     spacial_coordinate = np.arange(len(image_data))[bottom_spacial:top_spacial]
-    #
-    #     # Initial include_spacial guess if not provided
-    #     # include_spacial is absolute w.r.t the full image
-    #     if include_spacial is None:
-    #         # Let's pick the full current range as default
-    #         include_spacial = (bottom_spacial, top_spacial)
-    #
-    #     # Load normalization and external data
-    #     anchor_points = self.load_property('norm_anchor_wavelengths', epoch_num, band='COMBINED')
-    #     external_data = self.load_property('normalized_flux', epoch_num, band='COMBINED')
-    #     external_normalized_flux = external_data['normalized_flux']
-    #     external_wavelengths = external_data['wavelengths']
-    #
-    #     mask_band = (external_wavelengths >= wavelengths_2D.min()) & (external_wavelengths <= wavelengths_2D.max())
-    #     external_normalized_flux_band = external_normalized_flux[mask_band]
-    #     external_wavelengths_band = external_wavelengths[mask_band]
-    #     print(f'external_wavelengths_band is : {external_wavelengths_band}')
-    #
-    #     # Create figure
-    #     fig = plt.figure(figsize=(12, 9))
-    #     fig.subplots_adjust(left=0.08, right=0.95, top=0.92, bottom=0.25, wspace=0.4, hspace=0.6)
-    #
-    #     # Axes for the 2D image
-    #     ax_image = plt.subplot2grid((3, 2), (0, 0), rowspan=2)
-    #     p2D.Plot2DImage_for_cleaning(
-    #         image_data_central,
-    #         wavelengths_2D,
-    #         band,
-    #         bottom_spacial,
-    #         top_spacial,
-    #         -bottom_spacial,
-    #         -top_spacial,
-    #         title=f"2D Flux Image for {self.star_name} Band {band} (Epoch {epoch_num})",
-    #         ValMin=-600,
-    #         ValMax=600,
-    #         ax=ax_image
-    #     )
-    #     ax_image.set_title("Adjust sliders below to select star region", fontsize=12)
-    #
-    #     # Create the horizontal lines for include_spacial
-    #     # Note: We plot them relative to bottom_spacial so they appear correctly on the 2D image
-    #     # line_incl_start = ax_image.axhline(include_spacial[0] - bottom_spacial, color='red', linestyle='--')
-    #     # line_incl_end = ax_image.axhline(include_spacial[1] - bottom_spacial, color='red', linestyle='--')
-    #
-    #     # Axes for the summed flux vertically
-    #     ax_summed_vertical = plt.subplot2grid((3, 2), (0, 1))
-    #
-    #     # Axes for the summed flux horizontally
-    #     ax_summed_horizontal = plt.subplot2grid((3, 2), (1, 1))
-    #
-    #     # Axes for normalized flux comparison & difference
-    #     ax_norm = plt.subplot2grid((3, 2), (2, 0))
-    #     ax_diff = plt.subplot2grid((3, 2), (2, 1))
-    #
-    #     # Set initial y-limits for normalized flux and difference
-    #     ax_norm.set_ylim(-3, 5)
-    #     ax_diff.set_ylim(-3, 5)
-    #     ax_norm.set_xlim(np.min(wavelengths_2D)-10,np.max(wavelengths_2D)+10)
-    #     ax_diff.set_xlim(np.min(wavelengths_2D)-10,np.max(wavelengths_2D)+10)
-    #
-    #     # Position sliders and button below the plots
-    #     slider_ax_start = plt.axes([0.1, 0.14, 0.35, 0.03])
-    #     slider_ax_end = plt.axes([0.55, 0.14, 0.35, 0.03])
-    #     slider_ax_bottom = plt.axes([0.1, 0.07, 0.35, 0.03])
-    #     slider_ax_top = plt.axes([0.55, 0.07, 0.35, 0.03])
-    #     finish_ax = plt.axes([0.45, 0.03, 0.1, 0.05])
-    #
-    #     # Now include_start/end are absolute coordinates of the full image
-    #     # so we set the slider ranges to the full image.
-    #     slider_start = Slider(slider_ax_start, 'Include Start', 0, image_data.shape[0]-1, valinit=include_spacial[0], valstep=1)
-    #     slider_end = Slider(slider_ax_end, 'Include End', 0, image_data.shape[0], valinit=include_spacial[1], valstep=1)
-    #
-    #     slider_bottom = Slider(slider_ax_bottom, 'Bottom Spacial', 0, image_data.shape[0]-2, valinit=bottom_spacial, valstep=1)
-    #     slider_top = Slider(slider_ax_top, 'Top Spacial', 1, image_data.shape[0]-1, valinit=top_spacial, valstep=1)
-    #
-    #     finish_button = Button(finish_ax, 'Finish', color='lightgoldenrodyellow', hovercolor='0.975')
-    #     finished = {'value': False}
-    #
-    #     # Lines (for updating)
-    #     line_summed_vertical, = ax_summed_vertical.plot([], [], color='blue', label='Summed Flux (vertical)')
-    #     scatter_anchors = ax_summed_vertical.scatter([], [], color='red', label='Anchor Points')
-    #     line_summed_horizontal, = ax_summed_horizontal.plot([], [], color='blue', label='Summed Flux (horizontal)')
-    #     line_norm_cleaned, = ax_norm.plot([], [], color='blue', label='Cleaned Normalized Summed Flux')
-    #     line_norm_external, = ax_norm.plot([], [], color='orange', alpha=0.7, label='Non-Cleaned Normalized Flux')
-    #     line_diff, = ax_diff.plot([], [], color='red', label='Flux Difference')
-    #     line_reldiff, = ax_diff.plot([], [], color='purple', label='Relative Difference')
-    #
-    #     # Reference lines for relative difference
-    #     ax_diff.axhline(0.1, color='red', linestyle='dashed')
-    #     ax_diff.axhline(-0.1, color='red', linestyle='dashed')
-    #
-    #     ax_summed_vertical.set_xlabel('Wavelength (nm)')
-    #     ax_summed_vertical.set_ylabel('Summed Flux')
-    #     ax_summed_vertical.set_title('Vertical Summed Flux', fontsize=10)
-    #     ax_summed_vertical.legend(fontsize=9)
-    #     ax_summed_vertical.grid(True)
-    #
-    #     ax_summed_horizontal.set_xlabel('Spatial Coordinate')
-    #     ax_summed_horizontal.set_ylabel('Summed Flux')
-    #     ax_summed_horizontal.set_title('Horizontal Summed Flux', fontsize=10)
-    #     ax_summed_horizontal.legend(fontsize=9)
-    #     ax_summed_horizontal.grid(True)
-    #
-    #     ax_norm.set_xlabel('Wavelength (nm)')
-    #     ax_norm.set_ylabel('Normalized Flux')
-    #     ax_norm.set_title('Normalized Flux Comparison', fontsize=10)
-    #     ax_norm.legend(fontsize=9)
-    #     ax_norm.grid(True)
-    #
-    #     ax_diff.set_xlabel('Wavelength (nm)')
-    #     ax_diff.set_ylabel('Difference')
-    #     ax_diff.set_title('Flux & Relative Difference', fontsize=10)
-    #     ax_diff.legend(fontsize=9)
-    #     ax_diff.grid(True)
-    #
-    #     def update_plots(val):
-    #         current_bottom = int(slider_bottom.val)
-    #         current_top = int(slider_top.val)
-    #         if current_top <= current_bottom:
-    #             current_top = current_bottom + 1
-    #
-    #         # get absolute include_start/end
-    #         abs_include_start = int(slider_start.val)
-    #         abs_include_end = int(slider_end.val)
-    #         if abs_include_end <= abs_include_start:
-    #             abs_include_end = abs_include_start + 1
-    #
-    #         # Clamp include_start/end to [current_bottom, current_top]
-    #         # if abs_include_start < current_bottom:
-    #         #     abs_include_start = current_bottom
-    #         #     slider_start.set_val(abs_include_start)
-    #         # if abs_include_end > current_top:
-    #         #     abs_include_end = current_top
-    #         #     slider_end.set_val(abs_include_end)
-    #
-    #         current_image_data_central = image_data[current_bottom:current_top, :]
-    #         current_spacial_coordinate = np.arange(len(image_data))[current_bottom:current_top]
-    #
-    #         # Redraw the 2D image
-    #         ax_image.clear()
-    #         p2D.Plot2DImage_for_cleaning(
-    #             current_image_data_central,
-    #             wavelengths_2D,
-    #             band,
-    #             current_bottom,
-    #             current_top,
-    #             abs_include_start,
-    #             abs_include_end,
-    #             title=f"2D Flux Image for {self.star_name} Band {band} (Epoch {epoch_num})",
-    #             ValMin=-600,
-    #             ValMax=600,
-    #             ax=ax_image
-    #         )
-    #         ax_image.set_title("Adjust sliders below to select star region", fontsize=12)
-    #
-    #
-    #         # # Re-draw horizontal lines after clearing
-    #         # ax_image.axhline(abs_include_start - current_bottom, color='red', linestyle='--')
-    #         # ax_image.axhline(abs_include_end - current_bottom, color='red', linestyle='--')
-    #
-    #
-    #         # Indexing into the current_image_data_central using absolute coords
-    #         # relative indexes for the included region
-    #         rel_start = abs_include_start - current_bottom
-    #         rel_end = abs_include_end - current_bottom
-    #         image_data_included = current_image_data_central[rel_start:rel_end, :]
-    #         included_spacial_coordinate = current_spacial_coordinate[rel_start:rel_end]
-    #
-    #         summed_flux = np.sum(image_data_included, axis=0)
-    #         anchor_points_in_range = anchor_points[(anchor_points >= wavelengths_2D.min()) & (anchor_points <= wavelengths_2D.max())]
-    #         closest_indices = [np.abs(wavelengths_2D - ap).argmin() for ap in anchor_points_in_range]
-    #         selected_flux = [ut.robust_mean(summed_flux[max(0, idx - 10):idx + 10], 1) for idx in closest_indices]
-    #
-    #         if len(anchor_points_in_range) > 1:
-    #             continuum_flux_interpolated = np.interp(wavelengths_2D, anchor_points_in_range, selected_flux)
-    #         else:
-    #             continuum_flux_interpolated = np.full_like(wavelengths_2D, selected_flux[0] if selected_flux else 1.0)
-    #
-    #         normalized_summed_flux = summed_flux / continuum_flux_interpolated
-    #         normalized_summed_flux_resampled = np.interp(external_wavelengths_band, wavelengths_2D, normalized_summed_flux)
-    #
-    #         flux_difference = normalized_summed_flux_resampled - external_normalized_flux_band
-    #         relative_difference = flux_difference / external_normalized_flux_band
-    #
-    #         # Update vertical summed flux
-    #         line_summed_vertical.set_xdata(wavelengths_2D)
-    #         line_summed_vertical.set_ydata(summed_flux)
-    #         scatter_anchors.set_offsets(np.c_[anchor_points_in_range, selected_flux] if len(selected_flux) > 0 else [])
-    #         ax_summed_vertical.relim()
-    #         ax_summed_vertical.autoscale_view()
-    #
-    #         # Update horizontal summed flux
-    #         line_summed_horizontal.set_xdata(included_spacial_coordinate)
-    #         line_summed_horizontal.set_ydata(np.sum(image_data_included, axis=1))
-    #         ax_summed_horizontal.relim()
-    #         ax_summed_horizontal.autoscale_view()
-    #
-    #         # Update normalized flux and differences
-    #         line_norm_cleaned.set_xdata(wavelengths_2D)
-    #         line_norm_cleaned.set_ydata(normalized_summed_flux_resampled)
-    #         line_norm_external.set_xdata(wavelengths_2D)
-    #         line_norm_external.set_ydata(external_normalized_flux_band)
-    #
-    #         line_diff.set_xdata(wavelengths_2D)
-    #         line_diff.set_ydata(flux_difference)
-    #         line_reldiff.set_xdata(wavelengths_2D)
-    #         line_reldiff.set_ydata(relative_difference)
-    #
-    #         fig.canvas.draw_idle()
-    #
-    #     def finish_callback(event):
-    #         finished['value'] = True
-    #         plt.close(fig)  # Close the figure to exit the loop
-    #
-    #     finish_button.on_clicked(finish_callback)
-    #
-    #     # Initial update
-    #     update_plots(None)
-    #     slider_start.on_changed(update_plots)
-    #     slider_end.on_changed(update_plots)
-    #     slider_bottom.on_changed(update_plots)
-    #     slider_top.on_changed(update_plots)
-    #
-    #     plt.show()
-    #
-    #     # After window closed, return chosen values
-    #     final_bottom = int(slider_bottom.val)
-    #     final_top = int(slider_top.val)
-    #     if final_top <= final_bottom:
-    #         final_top = final_bottom + 1
-    #
-    #     final_include_start = int(slider_start.val)
-    #     final_include_end = int(slider_end.val)
-    #     if final_include_end <= final_include_start:
-    #         final_include_end = final_include_start + 1
-    #     # Clamp final includes
-    #     if final_include_start < final_bottom:
-    #         final_include_start = final_bottom
-    #     if final_include_end > final_top:
-    #         final_include_end = final_top
-    #
-    #     final_include_spacial = (final_include_start, final_include_end)
-    #     final_image_data_central = image_data[final_bottom:final_top, :]
-    #     rel_start = final_include_start - final_bottom
-    #     rel_end = final_include_end - final_bottom
-    #     final_image_data_included = final_image_data_central[rel_start:rel_end, :]
-    #
-    #     summed_flux = np.sum(final_image_data_included, axis=0)
-    #     anchor_points_in_range = anchor_points[(anchor_points >= wavelengths_2D.min()) & (anchor_points <= wavelengths_2D.max())]
-    #     closest_indices = [np.abs(wavelengths_2D - ap).argmin() for ap in anchor_points_in_range]
-    #     selected_flux = [ut.robust_mean(summed_flux[max(0, idx - 10):idx + 10], 1) for idx in closest_indices]
-    #
-    #     if len(anchor_points_in_range) > 1:
-    #         continuum_flux_interpolated = np.interp(wavelengths_2D, anchor_points_in_range, selected_flux)
-    #     else:
-    #         continuum_flux_interpolated = np.full_like(wavelengths_2D, selected_flux[0] if selected_flux else 1.0)
-    #
-    #     normalized_summed_flux = summed_flux / continuum_flux_interpolated
-    #     normalized_summed_flux_resampled = np.interp(external_wavelengths_band, wavelengths_2D, normalized_summed_flux)
-    #
-    #     return normalized_summed_flux_resampled, external_wavelengths_band, (final_bottom, final_top), final_include_spacial
-    
-    
-    
-    
