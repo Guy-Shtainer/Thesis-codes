@@ -1,5 +1,5 @@
 import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider, Button, RangeSlider
+from matplotlib.widgets import Slider, Button, RangeSlider, CheckButtons
 import numpy as np
 import TwoDImage as p2D
 import utils as ut
@@ -7,7 +7,9 @@ import utils as ut
 # GPT 23/7/25 17:49
 # at the top of clean_flux_and_normalize_interactive (or near other constants)
 SNR_PROP_NAME = 'snr_bounds'          # dict saved to star file:
-                                      # {'red': [x1,x2], 'blue': [x3,x4]}
+# {'red': [x1,x2], 'blue': [x3,x4]}
+NEG_MASK_STATE = {'on': False}
+
 
 def clean_flux_and_normalize_interactive(
         image_data,
@@ -91,6 +93,35 @@ def clean_flux_and_normalize_interactive(
     # NEW: Display cleaned status in the upper right corner of the image
     ax_image.text(0.98, 0.98, f"Cleaned: {cleaned_status}", transform=ax_image.transAxes,
                   ha='right', va='top', fontsize=12, color='green' if cleaned_status=="V" else 'red')
+
+    # GPT 6/9/25 16:13
+    # --- Checkbox to highlight negative pixels (session-sticky) ---
+    # Place it near the 2D image: to the right of ax_image.
+    img_pos = ax_image.get_position()  # figure fraction coords
+    # Try to put the box just to the right of the image; clamp to figure bounds
+    cb_left = min(img_pos.x1 + 0.01, 0.88)
+    cb_bottom = max(img_pos.y1 - 0.075, 0.02)
+    cb_ax = fig.add_axes([cb_left, cb_bottom, 0.10, 0.06])
+    # create with styling that hides the checkbox frame (the little square)
+    neg_check = CheckButtons(
+        cb_ax, ['<0'], [NEG_MASK_STATE['on']],
+        label_props={'bbox': [dict(facecolor='none', edgecolor='none', pad=0)]}  # no label box
+    )
+
+    # also hide the axes border so *nothing* frames the control
+    cb_ax.set_frame_on(False)
+    for s in cb_ax.spines.values():
+        s.set_visible(False)
+    cb_ax.set_xticks([])
+    cb_ax.set_yticks([])
+
+    def _on_neg_toggle(_):
+        NEG_MASK_STATE["on"] = not NEG_MASK_STATE["on"]
+        update_plots(None)  # redraw with/without overlay
+
+    neg_check.on_clicked(_on_neg_toggle)
+
+    ### End GPT 6/9/25 16:13
 
     # Create additional subplots (same as before)
     ax_summed_vertical = plt.subplot2grid((3, 2), (0, 1))
@@ -331,11 +362,51 @@ def clean_flux_and_normalize_interactive(
             ValMax=600,
             ax=ax_image
         )
+
         ax_image.text(0.5, 1.05, "Adjust sliders below to select star region",
                       transform=ax_image.transAxes, ha='center', va='bottom', fontsize=10)
         # Redraw the cleaned-status annotation
         ax_image.text(0.98, 0.98, f"Cleaned: {cleaned_status}", transform=ax_image.transAxes,
                       ha='right', va='top', fontsize=12, color='green' if cleaned_status=="V" else 'red')
+
+        # GPT 6/9/25 16:14
+        # --- Optional pink overlay where image_data < 0 (high contrast vs. green) ---
+        if NEG_MASK_STATE["on"]:
+            # 1) Remember the current view limits that p2D set (incl. your spatial window)
+            xlim = ax_image.get_xlim()
+            ylim = ax_image.get_ylim()
+
+            # 2) Build an RGBA array: fully opaque pink on negatives, transparent elsewhere
+            neg_mask = image_data < 0
+            overlay = np.zeros(
+                (image_data.shape[0], image_data.shape[1], 4), dtype=float
+            )
+            overlay[..., 0] = 1.0  # R
+            overlay[..., 2] = 1.0  # B   -> (1, 0, 1) pink
+            overlay[..., 3] = neg_mask.astype(
+                float
+            )  # alpha: 1 for negatives, 0 otherwise
+
+            # 3) Draw it exactly on top, but don't let imshow autoscale the axes
+            ax_image.imshow(
+                overlay,
+                origin="lower",
+                aspect="auto",
+                interpolation="nearest",
+                extent=[
+                    np.min(wavelengths_2D),
+                    np.max(wavelengths_2D),
+                    0,
+                    image_data.shape[0],
+                ],
+                zorder=10,
+                clip_on=True,
+            )
+
+            # 4) Restore the view limits so your spatial frame/zoom never changes
+            ax_image.set_xlim(xlim)
+            ax_image.set_ylim(ylim)
+        ### End GPT 6/9/25 16:14
 
         actual_start = max(0, abs_include_start)
         actual_end = min(image_data.shape[0], abs_include_end)
@@ -388,21 +459,46 @@ def clean_flux_and_normalize_interactive(
             normalized_summed_flux = summed_flux / continuum_flux_interpolated
 
             # GPT 23/7/25 17:50
+            # # -------------- 1) Continuum SNR (red window) ---------------------
+            # low_r, high_r = sorted(snr_bounds_red)
+            # mask_r = (wavelengths_2D >= low_r) & (wavelengths_2D <= high_r)
+            # cont_seg = normalized_summed_flux[mask_r]
+            # snr_cont = np.nan
+            # if cont_seg.size > 1 and np.all(np.isfinite(cont_seg)):
+            #     snr_cont = np.average(cont_seg) / np.std(cont_seg)
+
+            # # -------------- 2) Integrated line SNR (blue window) --------------
+            # low_b, high_b = sorted(snr_bounds_blue)
+            # mask_b = (wavelengths_2D >= low_b) & (wavelengths_2D <= high_b)
+            # line_seg = normalized_summed_flux[mask_b]
+            # snr_line = np.nan
+            # if line_seg.size > 1 and np.isfinite(line_seg).all() and not np.isnan(snr_cont):
+            #     snr_line = np.average(line_seg) / np.std(line_seg)
+
             # -------------- 1) Continuum SNR (red window) ---------------------
             low_r, high_r = sorted(snr_bounds_red)
             mask_r = (wavelengths_2D >= low_r) & (wavelengths_2D <= high_r)
             cont_seg = normalized_summed_flux[mask_r]
-            snr_cont = np.nan
-            if cont_seg.size > 1 and np.all(np.isfinite(cont_seg)):
-                snr_cont = np.average(cont_seg) / np.std(cont_seg)
 
-            # -------------- 2) Integrated line SNR (blue window) --------------
+            snr_cont = np.nan
+            sigma_red = np.nan
+            if cont_seg.size > 1 and np.all(np.isfinite(cont_seg)):
+                mu_red = np.nanmean(cont_seg)
+                sigma_red = np.nanstd(cont_seg, ddof=1) if cont_seg.size > 2 else np.nan
+                # keep RED SNR unchanged: mean/std inside the red window
+                snr_cont = mu_red / sigma_red if (sigma_red > 0 and np.isfinite(sigma_red)) else np.nan
+
+            # -------------- 2) Line SNR (blue window, new definition) ----------
+            # SNR_blue = (mean(line) - 1) / std(red)
             low_b, high_b = sorted(snr_bounds_blue)
             mask_b = (wavelengths_2D >= low_b) & (wavelengths_2D <= high_b)
             line_seg = normalized_summed_flux[mask_b]
+
             snr_line = np.nan
-            if line_seg.size > 1 and np.isfinite(line_seg).all() and not np.isnan(snr_cont):
-                snr_line = np.average(line_seg) / np.std(line_seg)
+            if line_seg.size > 1 and np.all(np.isfinite(line_seg)) and np.isfinite(sigma_red) and (sigma_red > 0):
+                mu_blue = np.nanmean(line_seg)
+                snr_line = (mu_blue - 1.0) / sigma_red
+
 
             # -------------- Resample to combined grid (unchanged) -------------
             normalized_summed_flux_resampled = np.interp(
