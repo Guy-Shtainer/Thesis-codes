@@ -9,6 +9,12 @@ import utils as ut
 SNR_PROP_NAME = 'snr_bounds'          # dict saved to star file:
 # {'red': [x1,x2], 'blue': [x3,x4]}
 NEG_MASK_STATE = {'on': False}
+# Add after other imports
+BAND_RANGES = {
+    "UVB": {"blue": (463, 470), "red": (435, 445)},
+    "VIS": {"blue": (577, 586), "red": (725, 748)},
+    "NIR": {"blue": (1726, 1738), "red": (1690, 1717)},
+}
 
 
 def clean_flux_and_normalize_interactive(
@@ -128,6 +134,7 @@ def clean_flux_and_normalize_interactive(
     ax_summed_horizontal = plt.subplot2grid((3, 2), (1, 1))
     ax_norm = plt.subplot2grid((3, 2), (2, 0))
 
+
     ### GPT 23/7/25 17:50
     # -------------------------------------------------------------
     # --- S N R   w i n d o w   i n i t i a l   p o s i t i o n s
@@ -147,11 +154,20 @@ def clean_flux_and_normalize_interactive(
     if saved_bounds:  # pulled from cache
         snr_bounds_red = saved_bounds['red']
         snr_bounds_blue = saved_bounds['blue']
-    else:  # default positions
-        snr_bounds_red = [idx_to_wave(centre_idx - half_red),
-                          idx_to_wave(centre_idx + half_red)]
-        snr_bounds_blue = [idx_to_wave(centre_idx - half_blue),
-                           idx_to_wave(centre_idx + half_blue)]
+    else:  # default positions based on band
+        if band == 'UVB':
+            snr_bounds_red = [435, 445]
+            snr_bounds_blue = [463, 470]
+        elif band == 'VIS':
+            snr_bounds_red = [725, 748]
+            snr_bounds_blue = [577, 586]
+        elif band == 'NIR':
+            snr_bounds_red = [1690, 1717]
+            snr_bounds_blue = [1726, 1738]
+        else:  # fallback to center if band not recognized
+            centre_idx = len(wavelengths_2D) // 2
+            snr_bounds_red = [wavelengths_2D[centre_idx - 20], wavelengths_2D[centre_idx + 20]]
+            snr_bounds_blue = [wavelengths_2D[centre_idx - 60], wavelengths_2D[centre_idx + 60]]
 
     # Two red dashed lines  (continuum window)
     snr_red_left = ax_norm.axvline(snr_bounds_red[0], color='red', ls='--', lw=1.2,
@@ -498,7 +514,6 @@ def clean_flux_and_normalize_interactive(
             if line_seg.size > 1 and np.all(np.isfinite(line_seg)) and np.isfinite(sigma_red) and (sigma_red > 0):
                 mu_blue = np.nanmean(line_seg)
                 snr_line = (mu_blue - 1.0) / sigma_red
-
 
             # -------------- Resample to combined grid (unchanged) -------------
             normalized_summed_flux_resampled = np.interp(

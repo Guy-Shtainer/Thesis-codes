@@ -602,65 +602,140 @@ class Star:
 
     ########################################                                     ########################################
 
-    def load_property(self, property_name, epoch_num, band, to_print=True):
+    def load_property(self, property_name, epoch_num, band, from_backup=False):
         """
         Loads and returns the data stored in the specified property for a given epoch and band.
+        Can also load from backup files if requested.
 
         Parameters:
             property_name (str): The name of the property to load.
             epoch_num (int or str): The epoch number.
             band (str): The band name.
+            to_print (bool): Whether to print messages.
+            from_backup (bool): Whether to check and offer loading from backup files.
 
         Returns:
             dict or Any: The data loaded from the property file.
                          Returns None if the property is not found or an error occurs.
-
         """
-        # Construct the path to the output directory for the specified epoch and band
+        # Construct paths
         epoch_str = f'epoch{epoch_num}'
         output_dir = os.path.join(self.data_dir, self.star_name, epoch_str, band, 'output')
+        backup_dir = os.path.join(self.backup_dir, self.star_name, epoch_str, band)
 
         if not os.path.exists(output_dir):
-            print(f"No output directory found for star '{self.star_name}', epoch '{epoch_num}', band '{band}'.")
-            return None
-
-        # Construct the full path to the property
-        property_path = os.path.join(output_dir, property_name + '.npz')
-
-        if os.path.isfile(property_path):
-            # Property is a file; load and return the data
-            return self._load_file(property_path)
-        elif os.path.isdir(property_path):
-            # Property is a folder; list files and ask user which one to load
-            files_in_folder = [f for f in os.listdir(property_path) if os.path.isfile(os.path.join(property_path, f))]
-            if not files_in_folder:
-                print(f"The folder '{property_path}' is empty.")
+            if self.to_print:
+                print(f"No output directory found for epoch {epoch_num}, band {band}")
+            if not from_backup:
                 return None
 
-            # Display files and number them
-            print(f"\nFolder '{property_path}' contains the following files:")
-            for idx, filename in enumerate(files_in_folder, start=1):
-                print(f"{idx}. {filename}")
+        property_path = os.path.join(output_dir, property_name + '.npz')
+        backup_pattern = os.path.join(backup_dir, f"{property_name}*.npz")
 
-            # Prompt user for input
+        # If from_backup is True or property doesn't exist, check backups
+        if from_backup:
+            # Check both deleted and overwritten folders
+            self.print(os.getcwd())
+            backup_base = "Backups"
+            deleted_pattern = os.path.join(backup_base, "deleted", *backup_dir.split(os.sep)[1:], f"{property_name}*.npz")
+            overwritten_pattern = os.path.join(backup_base, "overwritten", *backup_dir.split(os.sep)[1:], f"{property_name}*.npz")
+
+            deleted_files = sorted(glob.glob(deleted_pattern))
+            overwritten_files = sorted(glob.glob(overwritten_pattern))
+
+            if deleted_files and not overwritten_files:
+                self.print("\nFound backup files in 'deleted' folder:")
+                for idx, bfile in enumerate(deleted_files, 1):
+                    timestamp = os.path.basename(bfile).split('_')[-1].split('.')[0]
+                    self.print(f"{idx}. {os.path.basename(bfile)} (saved on {timestamp})")
+                self.print("\nEnter the number of the backup file to load (or 0 to cancel)")
+
+            elif overwritten_files and not deleted_files:
+                self.print("\nFound backup files in 'overwritten' folder:")
+                for idx, bfile in enumerate(overwritten_files, 1):
+                    timestamp = os.path.basename(bfile).split('_')[-1].split('.')[0]
+                    self.print(f"{idx}. {os.path.basename(bfile)}")
+                self.print("\nEnter the number of the backup file to load (or 0 to cancel)")
+
+            elif deleted_files and overwritten_files:
+                self.print("\nAvailable backup files:")
+                self.print("\nFrom 'deleted' folder (use 'd#'):")
+                for idx, bfile in enumerate(deleted_files, 1):
+                    timestamp = os.path.basename(bfile).split('_')[-1].split('.')[0]
+                    self.print(f"{idx}. {os.path.basename(bfile)}")
+
+                self.print("\nFrom 'overwritten' folder (use 'o#'):")
+                for idx, bfile in enumerate(overwritten_files, 1):
+                    timestamp = os.path.basename(bfile).split('_')[-1].split('.')[0]
+                    self.print(f"{idx}. {os.path.basename(bfile)} (saved on {timestamp})")
+                self.print("\nEnter 'd#' for deleted or 'o#' for overwritten (e.g., 'd3' or 'o2'), or 0 to cancel")
+
+            else:
+                if self.to_print:
+                    print(f"No backup files found for {property_name}")
+                return None
+
             while True:
-                user_input = input("\nEnter the number of the file to load: ")
                 try:
-                    selected_index = int(user_input.strip())
-                    if 1 <= selected_index <= len(files_in_folder):
-                        break
-                    else:
-                        self.print("Invalid input. Please enter a valid file number.", to_print)
-                except ValueError:
-                    self.print("Invalid input. Please enter a number corresponding to the file.", to_print)
+                    choice = input().strip()
+                    if choice == '0':
+                        return None
 
-            # Load and return the selected file
-            selected_file = files_in_folder[selected_index - 1]
-            selected_file_path = os.path.join(property_path, selected_file)
-            return self._load_file(selected_file_path)
+                    if deleted_files and not overwritten_files:
+                        choice = int(choice)
+                        if 1 <= choice <= len(deleted_files):
+                            selected_file = deleted_files[choice - 1]
+                            break
+
+                    elif overwritten_files and not deleted_files:
+                        choice = int(choice)
+                        if 1 <= choice <= len(overwritten_files):
+                            selected_file = overwritten_files[choice - 1]
+                            break
+
+                    else:  # Both folders have files
+                        if choice.startswith('d'):
+                            idx = int(choice[1:])
+                            if 1 <= idx <= len(deleted_files):
+                                selected_file = deleted_files[idx - 1]
+                                break
+                        elif choice.startswith('o'):
+                            idx = int(choice[1:])
+                            if 1 <= idx <= len(overwritten_files):
+                                selected_file = overwritten_files[idx - 1]
+                                break
+
+                    self.print("Invalid choice. Please try again.")
+                except ValueError:
+                    self.print("Please enter a valid number or format (d#/o#).")
+
+            try:
+                data = np.load(selected_file, allow_pickle=True)
+                if self.to_print:
+                    print(f"Loaded backup file: {os.path.basename(selected_file)}")
+                return data
+            except Exception as e:
+                self.print(f"Error loading backup file: {e}")
+                return None
+
+        # Load original file if it exists and from_backup is False
+        if os.path.isfile(property_path):
+            try:
+                # data = np.load(property_path, allow_pickle=True)
+                data = self._load_file(property_path)
+                if self.to_print:
+                    self.print(f"Loaded property from: {property_path}",to_print=self.to_print)
+                return data
+            except Exception as e:
+                self.print(f"Error loading property: {e}")
+                return None
+        elif os.path.isdir(property_path):
+            if self.to_print:
+                print(f"Property '{property_name}' is a directory")
+            return property_path
         else:
-            # Property does not exist
-            self.print(f"No file or folder named '{property_name}' found in '{output_dir}'.", to_print)
+            if self.to_print:
+                print(f"Property '{property_name}' not found")
             return None
 
     ########################################                                     ########################################
@@ -787,7 +862,6 @@ class Star:
                                     row[attr_name] = hdul[0].header.get(attr, 'Unknown')
                                     if row[attr_name] == 'Unknown':
                                         row[attr_name] = hdul[1].header.get(attr, 'Unknown')
-
 
                             else:
                                 # Get the band (DISPELEM) from the primary header (0th extension)
@@ -1439,16 +1513,6 @@ class Star:
             plt.savefig(os.path.join(outdir, fname))
             print(f"Saved figure to: {outdir}/{fname}")
 
-        # plt.rcParams.update({
-        #     'font.size':12,  # general font size
-        #     'axes.titlesize': 12,  # title font size
-        #     'axes.labelsize': 12,  # x and y labels
-        #     'xtick.labelsize': 12,  # x-axis tick labels
-        #     'ytick.labelsize': 12,  # y-axis tick labels
-        #     'legend.fontsize': 12,  # legend font size
-        #     'figure.titlesize': 12  # figure title font size
-        # })
-
         plt.show()
 
     ########################################                                       ########################################
@@ -1470,7 +1534,10 @@ class Star:
                                 match_to_peaks=False,  # only label lines that align with detected peaks
                                 peak_prominence=0.03,  # tweak for your S/N; used if match_to_peaks=True
                                 max_label_per_100A=6,  # de-clutter throttle
-                                even_emission_line = False
+                                even_emission_line = False,
+                                line_list=None,
+                                label_y=0.94,          # y position in axes fraction (0..1); lower it if you want
+                                label_stack_dy=0.06,   # how far the 2nd row drops when x-labels are too close
                                 ):
         """
         ...
@@ -1481,7 +1548,6 @@ class Star:
 
         import importlib
         from math import sqrt
-        import numpy as np
 
         def _get_default_wr_lines():
             # Curated (Å, rest) — lean list for WC + H/He work; expand as you wish
@@ -1493,49 +1559,70 @@ class Star:
                 ("N III 4640", 4640.64), ("Hα", 6562.80)
             ]
 
-        def _load_lines_via_linetools(species_filter):
-            try:
-                if not importlib.util.find_spec("linetools"):
-                    return None
-                from linetools.lists.linelist import LineList
-                # 'ISM' is broad; covers H/He/metals in optical reasonably well
-                ll = LineList('ISM')
-                df = ll._data  # structured array
-                # Build (name, wrest Å) tuples filtered by species
-                out = []
-                for row in df:
-                    name = str(row['name'])
-                    lam = float(row['wrest'])
-                    # crude species pick on leading token
-                    sp = name.split()[0]
-                    if species_filter and (sp not in species_filter):
-                        continue
-                    out.append((name, lam))
-                return out if out else None
-            except Exception:
-                return None
+        def _get_default_hot_star_lines():
+            # Fallback (lean) set if no list is provided
+            return [
+                ("Hγ", 4340.47), ("He I 4471", 4471.48), ("He II 4542", 4541.59),
+                ("He II 4686", 4685.68), ("Hβ", 4861.33), ("He I 4922", 4921.93),
+                ("He II 5411", 5411.52), ("O III 5592", 5592.26),
+                ("C IV 5801", 5801.33), ("C IV 5812", 5811.98),
+                ("He I 5876", 5875.62), ("Hα", 6562.80),
+                # a few key NIR lines so labels still work out-of-the-box
+                ("He I 1.0830 μm", 10830.25), ("Paβ 1.2818 μm", 12818.1),
+                ("He II 1.693 μm", 16930.0), ("Brγ 2.166 μm", 21655.0),
+                ("He II 2.1885 μm", 21885.0),
+            ]
+
+            # --- SINGLE, ROBUST line-list gatherer (uses your line_list if given) ---
 
         def _gather_line_list(species_filter):
-            lines = _load_lines_via_linetools(species_filter)
-            if (lines is None) or (len(lines) == 0):
-                lines = _get_default_wr_lines()
-                # If user passed a filter, apply to the default set
-                if species_filter:
-                    keep = []
-                    for name, lam in lines:
-                        sp = name.split()[0]  # "He", "C", "H", "N", "O"
-                        # normalize to "H I", "He II", etc. for a loose check
-                        if any(sp in s for s in species_filter):
-                            keep.append((name, lam))
-                    lines = keep or lines
-            # de-duplicate by wavelength
-            seen = set();
-            uniq = []
-            for name, lam in sorted(lines, key=lambda x: x[1]):
-                if abs(lam - next(iter(seen), lam + 1e6)) > 1e-3:
-                    uniq.append((name, lam))
-                seen.add(lam)
-            return uniq
+            # Prefer the user-supplied list; otherwise provide a lean fallback
+            if line_list is not None and len(line_list) > 0:
+                lines = list(line_list)  # list of (label, lambda_A)
+            else:
+                lines = [
+                    # lean fallback you already had
+                    ("He II 4200", 4199.83),
+                    ("Hγ", 4340.47),
+                    ("He II 4542", 4541.59),
+                    ("C III 4650", 4650.00),
+                    ("He II 4686", 4685.68),
+                    ("Hβ", 4861.33),
+                    ("He I 4922", 4921.93),
+                    ("O III 5592", 5592.26),
+                    ("C IV 5801.33", 5801.33),
+                    ("C IV 5811.98", 5811.98),
+                    ("He I 5876", 5875.62),
+                    ("Hα", 6562.80),
+                    # a few NIR stalwarts so you still get labels without a custom list
+                    ("He I 1.0830 μm", 10830.25),
+                    ("Paβ 1.2818 μm", 12818.10),
+                    ("He II 1.693 μm", 16930.00),
+                    ("Brγ 2.166 μm", 21655.00),
+                    ("He II 2.1885 μm", 21885.00),
+                ]
+
+            # Apply species filter by substring on the label (case-insensitive).
+            # This keeps "Paβ ..." when species_filter contains "Pa", etc.
+            if species_filter:
+                tokens = tuple(s.upper() for s in species_filter)
+                filt = [
+                    (name, lam)
+                    for (name, lam) in lines
+                    if any(tok in name.upper() for tok in tokens)
+                ]
+                if filt:
+                    lines = filt  # only apply if it actually matched something
+
+            # Sort and de-duplicate by wavelength (0.3 Å tolerance)
+            lines.sort(key=lambda x: x[1])
+            dedup = []
+            last_lam = None
+            for name, lam in lines:
+                if (last_lam is None) or (abs(lam - last_lam) > 0.3):
+                    dedup.append((name, float(lam)))
+                    last_lam = lam
+            return dedup
 
         def _observed_factor(correct_lmc, lmc_rv_kms):
             c = 299_792.458
@@ -1605,13 +1692,24 @@ class Star:
             # draw with minimal overlap: stack small y-offsets when too close
             ytop = ax.get_ylim()[1]
             used_x = []
+            trans = ax.get_xaxis_transform()  # x in data, y in axes fraction
             for name, lam in in_range:
-                ax.axvline(lam, linestyle=':', linewidth=0.9, alpha=0.8)
-                # avoid overlapping texts: if another label within 6 Å, offset
-                y = ytop * 0.96
+                ax.axvline(lam, linestyle=":", linewidth=0.9, alpha=0.75, zorder=1)
+                y_frac = label_y
                 if any(abs(lam - x0) < 6.0 for x0 in used_x):
-                    y = ytop * 0.90
-                ax.text(lam, y, name, rotation=90, va='top', ha='center', fontsize=8)
+                    y_frac = max(0.05, label_y - label_stack_dy)  # 2nd row if crowded
+                ax.text(
+                    lam,
+                    y_frac,
+                    name,
+                    rotation=90,
+                    va="top",
+                    ha="center",
+                    fontsize=8,
+                    transform=trans,
+                    clip_on=True,
+                    zorder=5,
+                )
                 used_x.append(lam)
 
         # ─── Get all epochs ─────────────────────────────────────────
@@ -1652,7 +1750,6 @@ class Star:
         wl_min, fl_min, tag_min = _load(min_ep)
         wl_max, fl_max, tag_max = _load(max_ep)
 
-
         # ─── Optional: compute default scaling (blue→red) ──────────
         def _default_scale_factor(wl_a, fl_a, wl_b, fl_b, line_window=None):
             """
@@ -1666,8 +1763,8 @@ class Star:
                 mask_a = (wl_a >= x0) & (wl_a <= x1)
                 mask_b = (wl_b >= x0) & (wl_b <= x1)
             else:
-                x0 = max(wl_a.min(), wl_b.min())
-                x1 = min(wl_a.max(), wl_b.max())
+                x0 = max(wl_a.min(), wl_b.min())*10
+                x1 = min(wl_a.max(), wl_b.max())*10
                 mask_a = (wl_a >= x0) & (wl_a <= x1)
                 mask_b = (wl_b >= x0) & (wl_b <= x1)
 
@@ -1693,6 +1790,7 @@ class Star:
                 peak_a = max(qa, 1e-3)
                 peak_b = max(qb, 1e-3)
 
+            print(f"Default scale factor (blue→red) near {emission_line}: {peak_b/peak_a:.3f} ")
             return float(peak_b / peak_a)
 
         # Decide the window: use emission_lines dict if available
@@ -1701,12 +1799,20 @@ class Star:
             line_window = emission_lines[emission_line]
 
         # Compute default factor to scale blue (min epoch) to red (max epoch)
+        # default_scale = 1.0
+        # if even_emission_line:
+        #     default_scale = _default_scale_factor(wl_min, fl_min, wl_max, fl_max, line_window)
+        #     print(f"Applying default scale factor {default_scale:.3f} to blue (min epoch) spectrum.")
+        #     # apply once so the first draw looks right
+        #     fl_min = 1.0 + (fl_min - 1.0) * default_scale
         default_scale = 1.0
         if even_emission_line:
             default_scale = _default_scale_factor(wl_min, fl_min, wl_max, fl_max, line_window)
-            # apply once so the first draw looks right
-            fl_min = 1.0 + (fl_min - 1.0) * default_scale
-
+            print(f"Applying default scale factor {default_scale:.3f} to blue (min epoch) spectrum.")
+            fl_min_base = fl_min.copy()  # Keep unmodified copy for slider
+            fl_min = 1.0 + (fl_min - 1.0) * default_scale  # Apply initial scaling
+        else:
+            fl_min_base = fl_min.copy()
 
         # ─── Optional: correct for LMC systemic Doppler shift ────────
         if correct_lmc:
@@ -1716,51 +1822,44 @@ class Star:
             wl_max = wl_max / doppler_factor
 
         # ─── Plot ───────────────────────────────────────────────────
-        plt.figure(figsize=(10, 6))
+        fig, ax_main = plt.subplots(figsize=(10, 6))
 
         if scatter:
-            plt.scatter(wl_min, fl_min,
-                        label=f'Epoch {min_ep} (RV={min_rv:.1f} km/s, {tag_min})',
-                        linewidth=linewidth)
-            plt.scatter(wl_max, fl_max,
-                        label=f'Epoch {max_ep} (RV={max_rv:.1f} km/s, {tag_max})',
-                        linewidth=linewidth)
+            blue = ax_main.scatter(wl_min, fl_min,
+                                label=f'Epoch {min_ep} (RV={min_rv:.1f} km/s, {tag_min})',
+                                linewidth=linewidth)
+            red  = ax_main.scatter(wl_max, fl_max,
+                                label=f'Epoch {max_ep} (RV={max_rv:.1f} km/s, {tag_max})',
+                                linewidth=linewidth)
         else:
-            plt.plot(wl_min, fl_min,
-                     label=f'Epoch {min_ep} (RV={min_rv:.1f} km/s, {tag_min})',
-                     linewidth=linewidth, color='blue')
-            plt.plot(wl_max, fl_max,
-                     label=f'Epoch {max_ep} (RV={max_rv:.1f} km/s, {tag_max})',
-                     linewidth=linewidth, color='red')
+            blue, = ax_main.plot(wl_min, fl_min,
+                                label=f'Epoch {min_ep} (RV={min_rv:.1f} km/s, {tag_min})',
+                                linewidth=linewidth, color='blue')
+            red,  = ax_main.plot(wl_max, fl_max,
+                                label=f'Epoch {max_ep} (RV={max_rv:.1f} km/s, {tag_max})',
+                                linewidth=linewidth, color='red')
 
-        # ─── Overplot model templates if requested ───────────────────
+        # Models
         if models:
             for tpl in models:
                 try:
                     tpl = f'Data/Models_for_Guy/' + tpl
                     model_wave, model_flux = np.loadtxt(tpl, unpack=True)
-                    # If correcting to LMC frame, apply same correction to models only if they are in observed frame.
-                    # Most templates are rest-frame; so by default do NOT shift model axes.
-                    plt.plot(model_wave, model_flux,
-                             label=os.path.basename(tpl),
-                             linestyle='--',
-                             linewidth=1.0)
+                    ax_main.plot(model_wave, model_flux, label=os.path.basename(tpl),
+                                linestyle='--', linewidth=1.0)
                 except Exception as e:
                     print(f"Warning: could not load template '{tpl}': {e}")
 
-        plt.xlabel('Wavelength [Å]' + (' (LMC rest frame)' if correct_lmc else ''))
-        plt.ylabel('Normalized Flux')
-        plt.title(f'{self.star_name}: Extreme RV Spectra ({emission_line})')
-        plt.legend(fontsize='small', loc='best')
-        plt.grid(True)
-        plt.tight_layout()
+        ax_main.set_xlabel('Wavelength [Å]' + (' (LMC rest frame)' if correct_lmc else ''))
+        ax_main.set_ylabel('Normalized Flux')
+        ax_main.set_title(f'{self.star_name}: Extreme RV Spectra ({emission_line})')
+        ax_main.legend(fontsize='small', loc='best')
+        ax_main.grid(True)
+        fig.tight_layout()
 
-        # ─── Interactive scale slider (Jupyter %matplotlib widget) ─
-        # Works for both line and scatter modes.
-        # Keep references to the artists we’ll update
-        ax_main = plt.gca()
-        blue_artist = None
-        red_artist  = None
+        # keep references for your slider code
+        blue_artist = blue
+        red_artist  = red
 
         if scatter:
             # PathCollection; update with set_offsets
@@ -1785,7 +1884,7 @@ class Star:
         reset_btn = Button(ax_reset, "Reset")
 
         # Keep pristine copies to avoid cumulative rounding
-        fl_min_base = fl_min.copy() if even_emission_line else (1.0 + (fl_min - 1.0) / default_scale).copy()
+        # fl_min_base = fl_min.copy() if even_emission_line else (1.0 + (fl_min - 1.0) / default_scale).copy()
         # Note: if even_emission_line=False, fl_min is unscaled now; we still allow interactive scaling from 1.0
 
         def _apply_scale(factor):
@@ -1821,47 +1920,74 @@ class Star:
         if even_emission_line:
             _apply_scale(default_scale)
 
-
         if auto_annotate:
             lines_rest = _gather_line_list(species_filter)
-            ax = plt.gca()
-            _annotate_lines_auto(ax, lines_rest,
-                                 wl_min, wl_max,
-                                 correct_lmc, lmc_rv_kms,
-                                 match_to_peaks, peak_prominence,
-                                 max_label_per_100A)
+            _annotate_lines_auto(ax_main, lines_rest,
+                                wl_min, wl_max,
+                                correct_lmc, lmc_rv_kms,
+                                match_to_peaks, peak_prominence,
+                                max_label_per_100A)
 
-        # ─── Zoom on line if requested ──────────────────────────────
+        # ─── Zoom on line + robust Y limits on THE SAME AXES ─────────────
         if save and emission_lines:
-            xmin, xmax = emission_lines[emission_line]
-            width = xmax - xmin
-            x_low = xmin - 0.1 * width
-            x_high = xmax + 0.1 * width
-            plt.xlim(x_low, x_high)
+            xmin_nm, xmax_nm = emission_lines[emission_line]
+            x_low = float(min(xmin_nm, xmax_nm) * 10.0)
+            x_high = float(max(xmin_nm, xmax_nm) * 10.0)
+            width = x_high - x_low
+            ax_main.set_xlim(x_low - 0.10 * width, x_high + 0.10 * width)
 
+            # collect flux in-window from what you actually drew
             m1 = (wl_min >= x_low) & (wl_min <= x_high)
             m2 = (wl_max >= x_low) & (wl_max <= x_high)
             flux_window = np.concatenate([fl_min[m1], fl_max[m2]])
-            y_min, y_max = flux_window.min(), flux_window.max()
-            pad = 0.05 * (y_max - y_min)
-            plt.ylim(y_min - pad, y_max + pad)
+            flux_window = flux_window[np.isfinite(flux_window)]
 
-        # ─── Save or Show ───────────────────────────────────────────
+            if flux_window.size:
+                q1, q99 = np.nanpercentile(flux_window, [1, 99])
+                if not np.isfinite(q1) or not np.isfinite(q99) or (q99 - q1) < 1e-3:
+                    med = np.nanmedian(flux_window) if np.isfinite(flux_window).any() else 1.0
+                    span = max(np.nanstd(flux_window), 5e-3)
+                    y_lo, y_hi = med - 3 * span, med + 3 * span
+                else:
+                    pad = 0.10 * (q99 - q1)
+                    y_lo, y_hi = q1 - pad, q99 + pad
+            else:
+                # fallback if masks are empty
+                ax_main.relim()
+                ax_main.autoscale_view(scalex=False, scaley=True)
+                y_lo, y_hi = ax_main.get_ylim()
+
+            # lock the y-limits on the real axes and force a draw before save
+            ax_main.set_autoscale_on(False)  # prevent later artists from changing it
+            ax_main.set_ylim(y_lo, y_hi)
+            fig.canvas.draw()  # <- ensures limits are committed
+
+        # ─── Save / Show / Close (no notebook rendering unless to_plot=True) ─
         if save:
             if ts is None:
-                ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-            outdir = os.path.join('output', re.sub(r"[^A-Za-z0-9_-]", "_", self.star_name),
-                                  'CCF', ts, emission_line)
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            outdir = os.path.join(
+                "../output",
+                re.sub(r"[^A-Za-z0-9_-]", "_", self.star_name),
+                "CCF",
+                ts,
+                emission_line,
+            )
             os.makedirs(outdir, exist_ok=True)
-            fname = f"{self.star_name}_{emission_line}_extremeRV.png"
+            if even_emission_line:
+                fname = f"{self.star_name}_{emission_line}_extremeRV_scaled.png"
+            else:
+                fname = f"{self.star_name}_{emission_line}_extremeRV_unscaled.png"
             path = os.path.join(outdir, fname)
-            plt.savefig(path)
+
+            with plt.ioff():  # suppress notebook display
+                fig.savefig(path, dpi=300, bbox_inches="tight")
             print(f"Saved {emission_line} plot to {path}")
 
         if to_plot:
             plt.show()
         else:
-            plt.close()
+            plt.close(fig)
 
     ########################################                                       ########################################
 
@@ -3017,7 +3143,6 @@ class Star:
                 wl = np.concatenate((wave[keep], wl))
                 fl = np.concatenate((flux[keep], fl))
                 sn = np.concatenate((snr[keep], sn))
-
                 wave, flux, snr = wl, fl, sn
 
             sort = np.argsort(wave)
@@ -3075,16 +3200,23 @@ class Star:
                 # 4)
                 flux_reduced_list = [np.ones_like(fl) for fl in fl_list]
                 comb_wl, comb_flux, comb_snr, _, align_info = self._combine_spectra(
-                    wl_list, fl_list, snr_list, flux_reduced_list, align=False)
+                    wl_list, fl_list, snr_list, flux_reduced_list, align=False
+                )
 
                 # 5) save to COMBINED
-                out = {'wavelengths': comb_wl,
-                       'normalized_flux': comb_flux}
-                self.save_property('cleaned_normalized_flux',
-                                   out, epoch, 'COMBINED',
-                                   overwrite=overwrite, backup=backup)
-                print(f"[Epoch {epoch}] saved stitched cleaned_normalized_flux "
-                      f"({len(comb_wl)} pixels) under COMBINED.")
+                out = {"wavelengths": comb_wl, "normalized_flux": comb_flux}
+                self.save_property(
+                    "cleaned_normalized_flux",
+                    out,
+                    epoch,
+                    "COMBINED",
+                    overwrite=overwrite,
+                    backup=backup,
+                )
+                print(
+                    f"[Epoch {epoch}] saved stitched cleaned_normalized_flux "
+                    f"({len(comb_wl)} pixels) under COMBINED."
+                )
 
             # end for-bands else
         # end for-epoch loop

@@ -63,7 +63,6 @@ class CCFclass:
         self.run_ts = run_ts
         self.nm = nm
 
-
     # ------------------------------------------------------------------ #
     # static helpers                                                      #
     # ------------------------------------------------------------------ #
@@ -72,7 +71,6 @@ class CCFclass:
         """Normalised dot-product."""
         return np.sum(f1 * f2) / np.std(f1) / np.std(f2) / N
 
-
     # ------------------------------------------------------------------ #
     # internal core: parabola-fit cross-correlation                       #
     # ------------------------------------------------------------------ #
@@ -80,30 +78,36 @@ class CCFclass:
         CCFarr = np.array([self._CCF(np.copy(Observation),
                                (np.roll(Mask, s))[CrossCorInds],N) for s in sRange])
         IndMax  = np.argmax(CCFarr)
-        vmax = veloRange[IndMax]
-        CCFMAX1  = CCFarr[IndMax]
+        # CCFarr = CCFarr[:IndMax].concatenate(CCFarr[IndMax+1:])
+        # print(f'CCFMax is {CCFarr[IndMax]} at index {IndMax}')
+        # CCFarr[IndMax] = np.average([CCFarr[IndMax-3:IndMax-1],CCFarr[IndMax+2:IndMax+4]])
+        CCFMAX1 = np.average([CCFarr[IndMax-3:IndMax-1],CCFarr[IndMax+2:IndMax+4]])
+        # print(f"After removing local max, CCFMax is {CCFarr[IndMax]} at index {IndMax}")
+        # vmax = veloRange[IndMax]
+        # CCFMAX1  = CCFarr[IndMax]
+        # CCFarr = CCFarr[:IndMax - 1].concatenate(CCFarr[IndMax + 2 :])
+        # IndMax = np.argmax(CCFarr)
 
         # edges at fitfac·CCFMAX1
         LeftEdgeArr  = np.abs(self.Fit_Range_in_fraction*CCFMAX1 - CCFarr[:IndMax])
         RightEdgeArr = np.abs(self.Fit_Range_in_fraction*CCFMAX1 - CCFarr[IndMax+1:])
 
-        if len(LeftEdgeArr) == 0 or len(RightEdgeArr) == 0:
-            print("Can't find local maximum in CCF\n")
-            fig1, ax1 = plt.subplots()
-            ax1.plot(veloRange, CCFarr, color='C0', label=f'obs {self.star_name}')
-            plt.show()
-            return np.array([None, None, None, None])
+        # if len(LeftEdgeArr) == 0 or len(RightEdgeArr) == 0:
+        #     print("Can't find local maximum in CCF\n")
+        #     fig1, ax1 = plt.subplots()
+        #     ax1.plot(veloRange, CCFarr, color='C0', label=f'obs {self.star_name}')
+        #     plt.show()
+        #     return np.array([None, None, None, None])
 
         IndFit1 = np.argmin(LeftEdgeArr)
         IndFit2 = np.argmin(RightEdgeArr) + IndMax + 1
-        a, b, c = np.polyfit(veloRange[IndFit1:IndFit2 + 1],
-                             CCFarr[IndFit1:IndFit2 + 1], 2)
+        a, b, c = np.polyfit(np.concatenate((veloRange[IndFit1:IndMax],veloRange[IndMax+1: IndFit2 + 1])),
+                             np.concatenate((CCFarr[IndFit1:IndMax],CCFarr[IndMax+1:IndFit2 + 1])), 2)
         vmax   = -b / (2*a)
         CCFAtMax = min(1-1E-20, c - b**2/4./a)
         FineVeloGrid = np.arange(veloRange[IndFit1], veloRange[IndFit2], .1)
         parable = (a * FineVeloGrid ** 2 + b * FineVeloGrid + c)
         sigma = np.sqrt(-1. / (N * 2 * a * CCFAtMax / (1 - CCFAtMax ** 2)))
-
 
         if self.PlotFirst or self.PlotAll or self.savePlot:
 
@@ -135,6 +139,44 @@ class CCFclass:
             # -------- 1.  CCF figure ----------------------------------------
             fig1, ax1 = plt.subplots(figsize=(10, 6))
             ax1.plot(veloRange, CCFarr, label='CCF', color='C0')
+            # Add both horizontal lines for original and averaged max
+            ax1.axhline(
+                y=CCFarr[IndMax],
+                color="red",
+                linestyle=":",
+                label=f"Original Max ({CCFarr[IndMax]:.3f})",
+                alpha=0.7,
+            )
+            ax1.axhline(
+                y=CCFMAX1,
+                color="gray",
+                linestyle="--",
+                label=f"Averaged Max ({CCFMAX1:.3f})",
+                alpha=0.7,
+            )
+            ax1.axhline(
+                y=self.Fit_Range_in_fraction * CCFMAX1,
+                color="blue",
+                linestyle="-.",
+                label=f"Fit Range ({self.Fit_Range_in_fraction:.2f}×avg_max)",
+                alpha=0.7,
+            )
+            # Add horizontal line at fit range fraction
+            ax1.axhline(
+                y=self.Fit_Range_in_fraction * CCFMAX1,
+                color="gray",
+                linestyle="--",
+                label=f"Fit Range ({self.Fit_Range_in_fraction:.2f}×max)",
+                alpha=0.7,
+            )
+
+            # Mark fit range points
+            ax1.plot(
+                [veloRange[IndFit1], veloRange[IndFit2]],
+                [CCFarr[IndFit1], CCFarr[IndFit2]],
+                "go",
+                label="Fit edges",
+            )
             ax1.plot(FineVeloGrid, parable, label='Fit (parabola)', color='C1', lw=1.5)
             ax1.axvline(RV, ls='--', color='r',
                         label=f"RV = {RV:.2f} ± {RV_error:.2f} km/s")
@@ -195,7 +237,7 @@ class CCFclass:
             print("Failed to cross-correlate: template probably sucks!")
             print("Check cross-correlation function + parable fit.")
             return None, None
-    
+
         CFFdvdvAtMax = 2*a
         return np.array([vmax, np.sqrt(-1./(N * CFFdvdvAtMax *
                                             CCFAtMax / (1 - CCFAtMax**2)))])
@@ -227,7 +269,7 @@ class CCFclass:
         vbin = clight / Resolution  # identical formula
 
         Nwaves = int(np.log(LamRangeR / LamRangeB) / np.log(1. + vbin / clight))
-        
+
         wavegridlog = LamRangeB * (1. + vbin / clight) ** np.arange(Nwaves)
 
         IntIs = np.array([np.argmin(np.abs(wavegridlog - self.CrossCorRangeA[i][0]))
@@ -237,7 +279,6 @@ class CCFclass:
 
         Ns = IntFs - IntIs # number of points in range. if there are several ranges at once it accounts for them
         N = np.sum(Ns) # relevant in case i pass several emission lines ranges
-
 
         CrossCorInds = np.concatenate(([np.arange(IntIs[i], IntFs[i])
                                         for i in np.arange(len(IntFs))])) # Find the indices which are the emission line
@@ -252,6 +293,50 @@ class CCFclass:
         flux = interp1d(obs_wave, np.nan_to_num(
             obs_flux), bounds_error=False, fill_value=1.,
                           kind='cubic')(wavegridlog[CrossCorInds])
+        # Clean spikes using rolling window
+        window_size = 20
+        sigma_thresh = 2
+
+        # Clean Mask
+        for i in range(len(Mask) - window_size):
+            window = Mask[i : i + window_size]
+            window_mean = np.mean(window)
+            window_std = np.std(window)
+            # if self.epoch == 6:
+                # print(f'window mean is {window_mean}, window std is {window_std}')
+
+            # Check each point in the window
+            for j in range(window_size):
+                # if self.epoch == 6:
+                    # print(f'checking Mask at index {i+j}, value {Mask[i+j]}')
+                if i + j >= len(Mask):
+                    break
+                if (
+                    Mask[i + j] > window_mean + sigma_thresh * window_std
+                    or Mask[i + j] < window_mean - sigma_thresh * window_std
+                ):
+                    Mask[i + j] = (
+                        Mask[max(0, i + j - 1)] + Mask[min(len(Mask) - 1, i + j + 1)]
+                    ) / 2
+
+        # Clean flux
+        for i in range(len(flux) - window_size):
+            window = flux[i : i + window_size]
+            window_mean = np.mean(window)
+            window_std = np.std(window)
+
+            # Check each point in the window
+            for j in range(window_size):
+                if i + j >= len(flux):
+                    break
+                if (
+                    flux[i + j] > window_mean + sigma_thresh * window_std
+                    or flux[i + j] < window_mean - sigma_thresh * window_std
+                ):
+                    flux[i + j] = (
+                        flux[max(0, i + j - 1)] + flux[min(len(flux) - 1, i + j + 1)]
+                    ) / 2
+
         CCFeval = self._crosscorreal(np.copy(flux - np.mean(flux)),
                                np.copy(Mask - np.mean(Mask)),CrossCorInds,sRange,N,veloRange,wavegridlog)
         return CCFeval[0], CCFeval[1]
