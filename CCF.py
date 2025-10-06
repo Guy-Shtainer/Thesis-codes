@@ -295,7 +295,7 @@ class CCFclass:
                           kind='cubic')(wavegridlog[CrossCorInds])
         # Clean spikes using rolling window
         window_size = 20
-        sigma_thresh = 2
+        sigma_thresh = 1
 
         # Clean Mask
         for i in range(len(Mask) - window_size):
