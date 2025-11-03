@@ -298,6 +298,76 @@ class CCFclass:
             [vmax, np.sqrt(-1.0 / (N * CFFdvdvAtMax * CCFAtMax / (1 - CCFAtMax**2)))]
         )
 
+        # ------------------------------------------------------------------ #
+    # EW + SNR helpers                                                    #
+    # ------------------------------------------------------------------ #
+    def _estimate_snr_robust(self, w, f):
+        """
+        SNR = 1/std measured in self.S2Nrange. If no overlap, fall back to
+        continuum outside CrossCorRangeA; if still empty, use global std.
+        """
+        noises = []
+        for rng in np.atleast_2d(self.S2Nrange):
+            m = (w > rng[0]) & (w < rng[1])
+            if np.any(m):
+                noises.append(np.std(f[m]))
+        if len(noises) == 0:
+            # exclude the line windows to approximate continuum
+            line_mask = np.zeros_like(w, dtype=bool)
+            for r in np.atleast_2d(self.CrossCorRangeA):
+                line_mask |= (w > r[0]) & (w < r[1])
+            cont = ~line_mask
+            if np.any(cont):
+                noise = np.std(f[cont])
+            else:
+                noise = np.std(f)
+        else:
+            # median is robust if you set several S2N windows
+            noise = float(np.median(noises))
+        snr = (1.0 / noise) if (noise > 0 and np.isfinite(noise)) else np.inf
+        return snr, noise
+
+    def _ew_sigma_rule_of_thumb(self, w, f):
+        """
+        Compute emission EW over CrossCorRangeA with continuum=1,
+        and the rule-of-thumb sigma(EW) using SNR=1/std.
+        Returns (EW, sigma_EW, SNR).
+        """
+        # ensure increasing wavelength for integration
+        if w[0] > w[-1]:
+            idx = np.argsort(w)
+            w = w[idx]
+            f = f[idx]
+
+        total_EW = 0.0
+        sum_dlam2N = 0.0  # for sigma(EW) = sqrt(sum(dλ^2 N)) / SNR
+
+        for r in np.atleast_2d(self.CrossCorRangeA):
+            m = (w > r[0]) & (w < r[1])
+            if np.count_nonzero(m) < 2:
+                continue
+            # emission EW with normalized continuum: ∫(f-1) dλ
+            dlam = np.median(np.diff(w[m]))
+            total_EW += np.trapz(f[m] - 1.0, w[m],dx=dlam)
+            Nk = np.count_nonzero(m)
+            sum_dlam2N += (dlam * dlam) * Nk
+
+        snr, _ = self._estimate_snr_robust(w, f)
+        sigma = (
+            (np.sqrt(sum_dlam2N) / snr)
+            if (sum_dlam2N > 0 and np.isfinite(snr))
+            else np.nan
+        )
+        return total_EW, sigma, snr
+
+    def _ew_gate(self, w, f, ksig=5.0):
+        """
+        Returns a dict with EW gate results for one epoch.
+        """
+        EW, sigEW, SNR = self._ew_sigma_rule_of_thumb(w, f)
+        detected = bool(np.isfinite(EW) and np.isfinite(sigEW) and (EW - ksig * sigEW) > 0.0)
+        return {"EW": EW, "sigma_EW": sigEW, "SNR": SNR, "detected": detected}
+
     # ------------------------------------------------------------------ #
     # public: single-spectrum RV                                          #
     # ------------------------------------------------------------------ #
@@ -374,47 +444,47 @@ class CCFclass:
         )(wavegridlog[CrossCorInds])
         # Clean spikes using rolling window
         window_size = 20
-        sigma_thresh = 1
+        sigma_thresh = 1.5
 
         # Clean Mask
-        # for i in range(len(Mask) - window_size):
-        #     window = Mask[i : i + window_size]
-        #     window_mean = np.mean(window)
-        #     window_std = np.std(window)
-        #     # if self.epoch == 6:
-        #     # print(f'window mean is {window_mean}, window std is {window_std}')
+        for i in range(len(Mask) - window_size):
+            window = Mask[i : i + window_size]
+            window_mean = np.mean(window)
+            window_std = np.std(window)
+            # if self.epoch == 6:
+            # print(f'window mean is {window_mean}, window std is {window_std}')
 
-        #     # Check each point in the window
-        #     for j in range(window_size):
-        #         # if self.epoch == 6:
-        #         # print(f'checking Mask at index {i+j}, value {Mask[i+j]}')
-        #         if i + j >= len(Mask):
-        #             break
-        #         if (
-        #             Mask[i + j] > window_mean + sigma_thresh * window_std
-        #             or Mask[i + j] < window_mean - sigma_thresh * window_std
-        #         ):
-        #             Mask[i + j] = (
-        #                 Mask[max(0, i + j - 1)] + Mask[min(len(Mask) - 1, i + j + 1)]
-        #             ) / 2
+            # Check each point in the window
+            for j in range(window_size):
+                # if self.epoch == 6:
+                # print(f'checking Mask at index {i+j}, value {Mask[i+j]}')
+                if i + j >= len(Mask):
+                    break
+                if (
+                    Mask[i + j] > window_mean + sigma_thresh * window_std
+                    or Mask[i + j] < window_mean - sigma_thresh * window_std
+                ):
+                    Mask[i + j] = (
+                        Mask[max(0, i + j - 1)] + Mask[min(len(Mask) - 1, i + j + 1)]
+                    ) / 2
 
-        # # Clean flux
-        # for i in range(len(flux) - window_size):
-        #     window = flux[i : i + window_size]
-        #     window_mean = np.mean(window)
-        #     window_std = np.std(window)
+        # Clean flux
+        for i in range(len(flux) - window_size):
+            window = flux[i : i + window_size]
+            window_mean = np.mean(window)
+            window_std = np.std(window)
 
-        #     # Check each point in the window
-        #     for j in range(window_size):
-        #         if i + j >= len(flux):
-        #             break
-        #         if (
-        #             flux[i + j] > window_mean + sigma_thresh * window_std
-        #             or flux[i + j] < window_mean - sigma_thresh * window_std
-        #         ):
-        #             flux[i + j] = (
-        #                 flux[max(0, i + j - 1)] + flux[min(len(flux) - 1, i + j + 1)]
-        #             ) / 2
+            # Check each point in the window
+            for j in range(window_size):
+                if i + j >= len(flux):
+                    break
+                if (
+                    flux[i + j] > window_mean + sigma_thresh * window_std
+                    or flux[i + j] < window_mean - sigma_thresh * window_std
+                ):
+                    flux[i + j] = (
+                        flux[max(0, i + j - 1)] + flux[min(len(flux) - 1, i + j + 1)]
+                    ) / 2
 
         CCFeval = self._crosscorreal(
             np.copy(flux - np.mean(flux)),
@@ -430,75 +500,112 @@ class CCFclass:
     # ------------------------------------------------------------------ #
     # public: two-pass RV + coadd                                         #
     # ------------------------------------------------------------------ #
-    def double_ccf(self, obs_list, tpl_wave, tpl_flux, return_coadd=False):
+    def double_ccf(self, obs_list, tpl_wave, tpl_flux, return_coadd=False, return_meta=False):
         """
-        Parameters
-        ----------
-        obs_list : list[(wave, flux), …]  – multiple observations
-        tpl_wave, tpl_flux : arrays       – initial template
+        Two-pass CCF with EW-based epoch gating.
 
-        Returns
-        -------
-        round1, round2 : lists of (RV, σ)
-        (optionally) (wave_coadd, flux_coadd)
+        Gate rule (emission): keep epoch if EW - 5*sigma(EW) > 0,
+        where sigma(EW) ≈ sqrt(sum_k N_k dλ_k^2) / SNR and SNR = 1/std
+        in self.S2Nrange.
+
+        Returns (backwards compatible by default):
+            if not return_coadd and not return_meta:
+                -> (round1, round2)
+            if return_coadd and not return_meta:
+                -> (round1, round2, (wave_coadd, flux_coadd))
+            if not return_coadd and return_meta:
+                -> (round1, round2, failed_indices)
+            if return_coadd and return_meta:
+                -> (round1, round2, (wave_coadd, flux_coadd), failed_indices, ew_meta)
         """
-        # --- first pass -------------------------------------------------
-        # --- first pass: RVs + per‑spectrum S/N from the CCF window ----------
-        r1, S2N = [], []
-        print(
-            f"Calculating for first time to get shifts and create the coadded template"
-        )
-        for w, f in obs_list:
-            rv, sig = self.compute_RV(w, f, tpl_wave, tpl_flux)
+        # ---------- 0) EW gate per epoch ----------
+        ew_meta = []
+        include_mask = []
+        failed_indices = []
+        for ep, w, f in obs_list:
+            info = self._ew_gate(w, f, ksig=5.0)
+            ew_meta.append(info)
+            ok = bool(info["detected"])
+            include_mask.append(ok)
+            if not ok:
+                failed_indices.append(ep)
+
+        # keep for later access even if caller doesn't request it
+        self.last_failed_indices = failed_indices
+
+        # ---------- 1) First pass (RV) ----------
+        r1 = []
+        S2N_all = []
+        print("Calculating first-pass RVs (EW-gated)…")
+        for i, (ep, w, f) in enumerate(obs_list):
+            if include_mask[i]:
+                rv, sig = self.compute_RV(w, f, tpl_wave, tpl_flux)
+            else:
+                rv, sig = (None, None)
             r1.append((rv, sig))
 
-            # ---- S/N from the same wavelength slice(s) ----------------------
-            noises = []
-            for rng in self.S2Nrange:
-                m = (w > rng[0]) & (w < rng[1])  # boolean mask
-                if m.any():
-                    noises.append(np.std(f[m]))
-            # fallback: if none of the ranges overlap this spectrum
-            noise = np.mean(noises)
-            S2N.append(1.0 / noise if noise > 0 else 1.0)
+            # SNR for weights (re-use same definition SNR=1/std)
+            snr, _ = self._estimate_snr_robust(w, f)
+            S2N_all.append(snr)
 
-        S2N = np.asarray(S2N)
+        # ---------- 2) Coadd (only included epochs) ----------
+        idx_keep = [i for i, ok in enumerate(include_mask) if ok]
+        print(f'idx_keep: {idx_keep}')
+        if len(idx_keep) == 0:
+            print("[EW gate] No usable epochs: coadd and round-2 RVs not computed.")
+            r2 = [(None, None) for _ in obs_list]
+            coadd_pair = (None, None)
+            if return_coadd and return_meta:
+                return (r1, r2, coadd_pair, failed_indices, ew_meta)
+            elif return_coadd:
+                return (r1, r2, coadd_pair)
+            elif return_meta:
+                return (r1, r2, failed_indices)
+            else:
+                return (r1, r2)
 
-        # --- co-add in rest frame --------------------------------------
-        w_common = obs_list[0][0] * 10 if self.nm else obs_list[0][0]
+        # choose reference wavelength grid from the first included epoch
+        w_ref = obs_list[idx_keep[0]][1]
+        w_common = w_ref * 10 if self.nm else w_ref
         coadd = np.zeros_like(w_common)
-        weights = (S2N**2) / np.sum(S2N**2)
-        # print(f'weights = {weights}')
-        # Iterate over observation list, radial velocities, and weights
-        print(f"Now calculating coadded template")
-        for (w, f), (rv, _), wgt in zip(obs_list, r1, weights):
-            if rv is None:
-                print(
-                    f"Check out star {self.star_name}, epoch {self.epoch} line {self.line_tag}"
-                )
-                continue
 
-            # print(f'rv is {rv}, wgt is {wgt} for epoch {self.epoch}')
-            # print(f'f is {f}, w is {w}')
-            # Perform wavelength shift and interpolation
-            try:
-                shifted = interp1d(
-                    w * (1 - rv / clight),
-                    f,
-                    kind=self.intr_kind,
-                    bounds_error=False,
-                    fill_value=1.0,
-                )(w_common)
-            except:
-                print(f"what failed is:")
-                print(f"rv: {rv}")
-                print(f"w: {w * (1 - rv / clight)}")
-                print(f"f: {shifted}")
+        # weights from included-only SNRs, normalized to sum=1 over included
+        S2N_included = np.asarray([S2N_all[i] for i in idx_keep])
+        wts = S2N_included**2
+        wts /= np.sum(wts)
+
+        print("Building coadded template (included epochs only)…")
+        for wgt, i in zip(wts, idx_keep):
+            (ep, w, f), (rv, _) = obs_list[i], r1[i]
+            # rv should not be None here, but guard anyway
+            if rv is None:
+                continue
+            shifted = interp1d(
+                w * (1 - rv / clight),
+                f,
+                kind=self.intr_kind,
+                bounds_error=False,
+                fill_value=1.0,
+            )(w_common)
             coadd += wgt * shifted
 
-            # --- second pass ----------------------------------------------
-        # print(f'coadd is {coadd}')
-        print(f"Finally calculating CCF using coadded template")
-        r2 = [self.compute_RV(w, f, w_common, coadd) for w, f in obs_list]
+        # ---------- 3) Second pass (only included epochs) ----------
+        print("Finally calculating CCF using coadded template (EW-gated)…")
+        r2_full = [None] * len(obs_list)
+        for i in idx_keep:
+            ep,w, f = obs_list[i]
+            r2_full[i] = self.compute_RV(w, f, w_common, coadd)
 
-        return (r1, r2, (w_common, coadd)) if return_coadd else (r1, r2)
+        # Fill excluded ones with (None, None) so the output lines up with obs_list
+        r2 = [val if val is not None else (None, None) for val in r2_full]
+
+        # ---------- 4) Returns ----------
+        coadd_pair = (w_common, coadd)
+        if return_coadd and return_meta:
+            return (r1, r2, coadd_pair, failed_indices, ew_meta)
+        elif return_coadd:
+            return (r1, r2, coadd_pair)
+        elif return_meta:
+            return (r1, r2, failed_indices)
+        else:
+            return (r1, r2)
