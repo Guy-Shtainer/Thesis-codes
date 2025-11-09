@@ -299,6 +299,7 @@ class CCFclass:
         )
 
         # ------------------------------------------------------------------ #
+
     # EW + SNR helpers                                                    #
     # ------------------------------------------------------------------ #
     def _estimate_snr_robust(self, w, f, for_ew: bool = False):
@@ -314,7 +315,9 @@ class CCFclass:
         if for_ew:
             width = 0.5 if self.nm else 5.0  # 0.5 nm ≡ 5 Å
             # one window per line range: [left-edge - width, left-edge]
-            search_ranges = [[r[0] - width, r[0]] for r in np.atleast_2d(self.CrossCorRangeA)]
+            search_ranges = [
+                [r[0] - width, r[0]] for r in np.atleast_2d(self.CrossCorRangeA)
+            ]
         else:
             search_ranges = self.S2Nrange
 
@@ -342,7 +345,6 @@ class CCFclass:
 
         snr = (1.0 / noise) if (noise > 0 and np.isfinite(noise)) else np.inf
         return snr, noise
-
 
     def _ew_sigma_rule_of_thumb(self, w, f):
         """
@@ -372,16 +374,21 @@ class CCFclass:
         # *** NEW: SNR from left-of-line, 5 Å (0.5 nm if self.nm=True) ***
         snr, _ = self._estimate_snr_robust(w, f, for_ew=True)
 
-        sigma = (np.sqrt(sum_dlam2N) / snr) if (sum_dlam2N > 0 and np.isfinite(snr)) else np.nan
+        sigma = (
+            (np.sqrt(sum_dlam2N) / snr)
+            if (sum_dlam2N > 0 and np.isfinite(snr))
+            else np.nan
+        )
         return total_EW, sigma, snr
-
 
     def _ew_gate(self, w, f, ksig=10.0):
         """
         Returns a dict with EW gate results for one epoch.
         """
         EW, sigEW, SNR = self._ew_sigma_rule_of_thumb(w, f)
-        detected = bool(np.isfinite(EW) and np.isfinite(sigEW) and (EW - ksig * sigEW) > 0.0)
+        detected = bool(
+            np.isfinite(EW) and np.isfinite(sigEW) and (EW - ksig * sigEW) > 0.0
+        )
         return {"EW": EW, "sigma_EW": sigEW, "SNR": SNR, "detected": detected}
 
     # ------------------------------------------------------------------ #
@@ -512,7 +519,7 @@ class CCFclass:
             wavegridlog,
         )
         return CCFeval[0], CCFeval[1]
-    
+
     def clean_line_with_iterative_poly(
             self,
             wave,
@@ -522,28 +529,20 @@ class CCFclass:
             n_stages=3,
             sample_frac=0.7,
             deg=5,
-            sigma_clip=3.0,
+            # <<< asymmetric clipping >>>
+            sigma_clip_pos=3.0,      # for positive residuals (spikes)
+            sigma_clip_neg=2.0,      # for negative residuals (absorptions)
             random_state=None,
             plot=True,
             ax=None,
-            add_noise=True,                 # << NEW
-            noise_source='residual',        # 'residual' | 'leftwin' | 'local' | 'global'
-            noise_floor=1e-6,               # << NEW
+            # noise injection at replaced pixels (unchanged)
+            add_noise=True,
+            noise_source='residual',   # 'residual' | 'leftwin' | 'local' | 'global'
+            noise_floor=1e-6,
         ):
         """
-        Multi-stage cleaner:
-        - Split n_iter into n_stages chunks.
-        - After each chunk, average the random deg-degree poly fits to a model,
-            σ-clip residuals within the focus range(s), replace outliers with the model,
-            and proceed to the next chunk using the UPDATED flux.
-        - Final outputs are the cumulatively cleaned flux, the FINAL stage model,
-            and a union mask of all replaced points across stages.
-
-        If focus_range is None, applies to all ranges in self.CrossCorRangeA,
-        sequentially on the same flux. Plot shows only the emission-line range(s)
-        and highlights all replaced points in red.
+        Staged cleaning with asymmetric σ-clipping (no upper-envelope sampling).
         """
-
         wave = np.asarray(wave, dtype=float)
         flux = np.asarray(flux, dtype=float)
 
@@ -556,36 +555,30 @@ class CCFclass:
                 raise ValueError("focus_range must satisfy lo < hi.")
             ranges = [(lo, hi)]
 
-        # Accumulators for a single combined plot across all ranges
-        combined_model = np.full_like(flux, np.nan, dtype=float)  # final stage model per pixel
-        combined_repl  = np.zeros_like(flux, dtype=bool)          # union of all replacements
+        combined_model = np.full_like(flux, np.nan, dtype=float)
+        combined_repl  = np.zeros_like(flux, dtype=bool)
         cleaned_flux   = flux.copy()
 
         rng = np.random.default_rng(random_state)
 
         def _clean_one_range_staged(w, f_in, lo, hi):
-            """Run staged cleaning on a single [lo,hi] range, return updated flux and masks."""
             in_mask = (w >= lo) & (w <= hi)
             if np.count_nonzero(in_mask) < (deg + 1):
-                # Not enough points to fit the polynomial – skip safely
                 return f_in.copy(), np.full_like(f_in, np.nan, dtype=float), np.zeros_like(f_in, dtype=bool)
 
-            # local views for convenience
             xi = w[in_mask]
-            # will mutate yi as we replace outliers between stages
             yi = f_in[in_mask].copy()
             M  = xi.size
 
-            # sample size per iteration
+            # per-iteration sample size
             k = max(deg + 1, int(np.ceil(sample_frac * M)))
             k = min(k, M)
 
-            # normalize x for numerical stability
+            # normalize x
             xc  = xi.mean()
             xs  = xi.std() if xi.std() > 0 else 1.0
             xi0 = (xi - xc) / xs
 
-            # staging setup
             n_stages_eff = max(1, int(n_stages))
             it_per_stage = max(1, int(np.ceil(n_iter / n_stages_eff)))
 
@@ -601,94 +594,76 @@ class CCFclass:
                     preds[t] = np.polyval(coeffs, xi0)
                 model_i = preds.mean(axis=0)
 
-                # --- robust residual sigma & clip ---
-                res   = yi - model_i
-                med   = np.median(res)
-                mad   = np.median(np.abs(res - med))
+                # --- robust residual σ & asymmetric clipping ---
+                res  = yi - model_i
+                med  = np.median(res)
+                mad  = np.median(np.abs(res - med))
                 sigma = 1.4826 * mad if mad > 0 else (np.std(res) if np.std(res) > 0 else 0.0)
+                sigma = max(float(sigma), float(noise_floor))
 
-                outliers = np.abs(res - med) > (sigma_clip * max(sigma, noise_floor))
+                r = res - med
+                outliers_local = (r >  sigma_clip_pos * sigma) | (r < -sigma_clip_neg * sigma)
 
-                # --- choose noise scale ---------------------------------------
+                # --- choose noise scale for inserts ---
                 if noise_source == 'residual':
                     noise_sigma = sigma
                 elif noise_source == 'leftwin':
-                    # use the same near-line continuum window as your EW SNR
-                    # (left side of the line range)
-                    _, noise_sigma = self._estimate_snr_robust(w, f_in, for_ew=True)
+                    _, noise_sigma = self._estimate_snr_robust(w, f_in, for_ew=True)  # returns (snr, noise)
                 elif noise_source == 'local':
-                    # plain std of current segment (robustness not guaranteed)
-                    yseg = f_in[in_mask]
-                    noise_sigma = float(np.std(yseg)) if yseg.size else 0.0
+                    noise_sigma = float(np.std(f_in[in_mask]))
                 elif noise_source == 'global':
                     noise_sigma = float(np.std(f_in))
                 else:
                     noise_sigma = sigma
+                noise_sigma = max(float(noise_sigma), float(noise_floor))
 
-                noise_sigma = max(float(noise_sigma), noise_floor)
-
-                # --- replace outliers (optionally with noise) ------------------
-                if np.any(outliers):
+                # --- replace and continue ---
+                if np.any(outliers_local):
                     if add_noise:
-                        yi[outliers] = model_i[outliers] + rng.normal(
-                            0.0, noise_sigma, size=int(outliers.sum())
+                        yi[outliers_local] = model_i[outliers_local] + rng.normal(
+                            0.0, noise_sigma, size=int(outliers_local.sum())
                         )
                     else:
-                        yi[outliers] = model_i[outliers]
+                        yi[outliers_local] = model_i[outliers_local]
 
-                # Accumulate replacements etc. (unchanged)
+                # accumulate to full-length arrays
                 tmp_mask = np.zeros_like(f_in, dtype=bool)
-                tmp_mask[in_mask] = outliers
+                tmp_mask[in_mask] = outliers_local
                 replaced_union |= tmp_mask
 
                 if stage == n_stages_eff - 1:
                     model_full_final[in_mask] = model_i
 
-                if not np.any(outliers) and stage < n_stages_eff - 1:
+                if not np.any(outliers_local) and stage < n_stages_eff - 1:
                     model_full_final[in_mask] = model_i
                     break
 
-            # write back cleaned segment
             f_out = f_in.copy()
             f_out[in_mask] = yi
-
             return f_out, model_full_final, replaced_union
 
-        # Clean all ranges sequentially on the evolving cleaned_flux
+        # Clean all ranges sequentially on evolving flux
         for (lo, hi) in ranges:
             cleaned_flux, model_full, replaced_full = _clean_one_range_staged(wave, cleaned_flux, lo, hi)
-            # accumulate model & replacements
             msel = ~np.isnan(model_full)
             combined_model[msel] = model_full[msel]
             combined_repl |= replaced_full
 
-        # --- plotting (once) ---
-        if plot:  # << only this flag matters for showing the plot
+        # --- plotting (focused; always when plot=True) ---
+        if plot:
             if ax is None:
                 fig, ax = plt.subplots(figsize=(9, 5))
-
             units = "nm" if self.nm else "Å"
-
-            # Determine plotted ranges
-            if focus_range is None:
-                _ranges = [tuple(r) for r in np.atleast_2d(self.CrossCorRangeA)]
-            else:
-                lo, hi = focus_range
-                _ranges = [(min(lo, hi), max(lo, hi))]
-
-            # Union mask for the plotted region(s)
+            _ranges = [tuple(r) for r in np.atleast_2d(self.CrossCorRangeA)] if focus_range is None \
+                    else [(min(focus_range[0], focus_range[1]), max(focus_range[0], focus_range[1]))]
             mask_total = np.zeros_like(wave, dtype=bool)
             for lo, hi in _ranges:
                 mask_total |= (wave >= lo) & (wave <= hi)
 
-            # Mask outside-range points for a clean view
-            f_plot = flux.copy()
-            f_plot[~mask_total] = np.nan
-            c_plot = cleaned_flux.copy()
-            c_plot[~mask_total] = np.nan
-            m_plot = combined_model.copy()  # NaN outside cleaned regions already
+            f_plot = flux.copy();        f_plot[~mask_total] = np.nan
+            c_plot = cleaned_flux.copy(); c_plot[~mask_total] = np.nan
+            m_plot = combined_model.copy()
 
-            # Plot original, final-stage model, cleaned, and replaced points (union)
             ax.plot(wave, f_plot, label="original", alpha=0.8)
             if np.any(~np.isnan(m_plot)):
                 ax.plot(wave, m_plot, ls="--", label=f"avg deg-{deg} model (final stage)")
@@ -698,43 +673,33 @@ class CCFclass:
             if np.any(repl_in):
                 ax.scatter(wave[repl_in], flux[repl_in], s=18, color="red", label="replaced")
 
-            # Tight x-limits around union of ranges (+5% padding)
-            lo_all = min(r[0] for r in _ranges)
-            hi_all = max(r[1] for r in _ranges)
+            lo_all = min(r[0] for r in _ranges); hi_all = max(r[1] for r in _ranges)
             pad = 0.05 * (hi_all - lo_all) if hi_all > lo_all else (0.5 if self.nm else 5.0)
             ax.set_xlim(lo_all - pad, hi_all + pad)
-
-            ax.set_xlabel(f"Wavelength [{units}]")
-            ax.set_ylabel("Normalized flux")
-            title_tag = self.line_tag or "emission line"
-            ax.set_title(f"Cleaning {self.star_name} | {title_tag}")
-            ax.legend()
-            ax.grid(ls="--", alpha=0.35)
-            plt.tight_layout()
+            ax.set_xlabel(f"Wavelength [{units}]"); ax.set_ylabel("Normalized flux")
+            ax.set_title(f"Cleaning {self.star_name} | {self.line_tag or 'emission line'}")
+            ax.legend(); ax.grid(ls="--", alpha=0.35); plt.tight_layout()
 
             if self.savePlot:
                 clean_star = re.sub(r"[^A-Za-z0-9_-]", "_", (self.star_name or "unknown"))
-                epoch_str  = "NA" if self.epoch is None else str(self.epoch)
-                spec_str   = "" if self.spectrum is None else (f"_S{self.spectrum}")
+                epoch_str = "NA" if self.epoch is None else str(self.epoch)
+                spec_str  = "" if self.spectrum is None else (f"_S{self.spectrum}")
                 out_dir = Path("../output") / clean_star / "CLEAN" / (self.run_ts or "")
                 out_dir.mkdir(parents=True, exist_ok=True)
-                plt.savefig(out_dir / f"{clean_star}_MJD{epoch_str}{spec_str}_{title_tag}_CLEAN.png", dpi=150)
-
+                plt.savefig(out_dir / f"{clean_star}_MJD{epoch_str}{spec_str}_{self.line_tag or 'line'}_CLEAN.png", dpi=150)
             plt.show()
-            try:
-                plt.close(fig)
-            except NameError:
-                pass
+            try: plt.close(fig)
+            except NameError: pass
 
         return cleaned_flux, combined_model, combined_repl
-
-
 
 
     # ------------------------------------------------------------------ #
     # public: two-pass RV + coadd                                         #
     # ------------------------------------------------------------------ #
-    def double_ccf(self, obs_list, tpl_wave, tpl_flux, return_coadd=False, return_meta=False):
+    def double_ccf(
+        self, obs_list, tpl_wave, tpl_flux, return_coadd=False, return_meta=False
+    ):
         """
         Two-pass CCF with EW-based epoch gating.
 
@@ -759,16 +724,18 @@ class CCFclass:
             f_clean, _, _ = self.clean_line_with_iterative_poly(
                 wave=w,
                 flux=f,
-                focus_range=None,     # << uses self.CrossCorRangeA internally
+                focus_range=None,  # << uses self.CrossCorRangeA internally
                 n_iter=3000,
                 n_stages=30,
                 sample_frac=0.7,
                 deg=18,
-                sigma_clip=4.0,
+                sigma_clip_neg=3,
+                sigma_clip_pos=4,
                 random_state=42,
-                plot=True
+                noise_source='leftwin',
+                plot=True,
             )
-            print(f'cleaned epoch {ep} of line {self.line_tag}')
+            print(f"cleaned epoch {ep} of line {self.line_tag}")
             cleaned_obs_list.append((ep, w, f_clean))
 
         obs_list = cleaned_obs_list
@@ -846,7 +813,7 @@ class CCFclass:
         print("Finally calculating CCF using coadded template (EW-gated)…")
         r2_full = [None] * len(obs_list)
         for i in idx_keep:
-            ep,w, f = obs_list[i]
+            ep, w, f = obs_list[i]
             r2_full[i] = self.compute_RV(w, f, w_common, coadd)
 
         # Fill excluded ones with (None, None) so the output lines up with obs_list
