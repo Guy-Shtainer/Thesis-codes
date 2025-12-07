@@ -797,7 +797,200 @@ obs_file_names = {'Brey  16a': {'epoch1': {'COMBINED': 'combined_bands.fits',
                      'UVB': 'ADP.2021-11-30T21_52_41.817.fits',
                      'VIS': 'ADP.2021-11-30T21_52_41.715.fits'}}}
 
-
+default = 0.95
+CCF_parabola_fraction = {
+'Brey  70': {
+    # "O V 3100-3175": 0.85,
+    "O VI 5210-5340": 0.85,
+    "C IV 5350-5540": 0.85,
+    "C III 6700-6800": 0.85,
+    "C III 6970-7100": 0.85,
+    "He I 17100-17630": 0.9,
+    },
+'Brey  83':{
+    "O V 3100-3175":0.9 ,
+    "C IV 3650-3900": 0.9,
+    "O VI 5210-5340": 0.9,
+    "C IV 5350-5540":0.9 ,
+    "C III 6700-6800": 0.9,
+    "C III 6970-7100": 0.9,
+    "He I 17100-17630": 0.9,
+    "Mystery 20500-21000": 0.85
+},
+'HD  38029':{
+    "O V 3100-3175": 0.9,
+    "O IV 3350-3480": 0.9,
+    "O VI 5210-5340": 0.9,
+    "C IV 5350-5540": 0.85,
+    "C III 6700-6800": 0.9,
+    "C III 6970-7100": 0.9,
+    "He I 17100-17630": 0.9,
+    "Mystery 20500-21000": 0.85
+},
+'HD  37248':{
+    "O V 3100-3175": 0.85,
+    "O VI 5210-5340": 0.9,
+    "C IV 5350-5540": 0.87,
+    "C III 6700-6800": 0.9,
+    "C III 6970-7100": 0.9,
+    "He I 17100-17630": 0.9,
+    "Mystery 20500-21000": 0.9 
+},
+'Brey  95a':{
+    # "O V 3100-3175": 0.9, #skipped
+    "O VI 5210-5340": 0.7, #check again
+    "C IV 5350-5540": 0.8, #check again
+    "C III 6700-6800": 0.85,
+    "C III 6970-7100": 0.9,
+    "He I 17100-17630": default, #crap
+    "Mystery 20500-21000": 0.93 
+},
+'MNM2014 LMC195-1':{
+    "O V 3100-3175": 0.9,
+    # "O VI 5210-5340": default, # epoch 2 crap
+    # "C IV 5350-5540":default , #epoch 5 crap
+    "C III 6700-6800":0.85 , #crap, check again
+    "He I 17100-17630":0.9 # gotta check 
+},
+'HD  32125':{
+    "O V 3100-3175": default,
+    "O IV 3350-3480": default,
+    "C IV 3650-3900": default,
+    "He II 4686": default,
+    "C IV 5808-5812": default,
+    "O VI 5210-5340": default,
+    "C IV 5350-5540":default ,
+    "C III 6700-6800": default,
+    "C III 6970-7100": default,
+    "He I 17100-17630": default,
+    "Mystery 20500-21000":default
+},
+'HD  37026':{
+    "O V 3100-3175": 0.9,
+    "O VI 5210-5340": default, # epoch 2 destroys but i redid the range so ill run again and check
+    "C IV 5350-5540": default, #something is off. again a huge emission peak with no epoch its coming from 
+    "He I 17100-17630": 0.9,
+    "Mystery 20500-21000": 0.9 
+},
+'HD 269818':{
+    "O V 3100-3175": 0.7,
+    "C III 6700-6800": default, # check again
+    "He I 17100-17630": default, # check again
+},
+'HD  38448':{
+    "O V 3100-3175": 0.9,
+},
+'HD  38030':{
+    "O V 3100-3175": 0.9,
+    "He I 17100-17630": 0.9,
+},
+'HD  37680':{
+    "O V 3100-3175": 0.9,
+    "He I 17100-17630":default , # has a strong absorption line which messes things up. check again
+    "Mystery 20500-21000": 0.9
+},
+'Brey  58a':{
+    "O V 3100-3175": default, # all epochs are too diluted, threw it away
+    "O IV 3350-3480":0.9 , #check again
+    "C IV 3650-3900": 0.85, #epoch 5 is too diluted, threw it away. check again
+    "O VI 5210-5340": 0.9,
+    "C IV 5350-5540": 0.9,
+    "C III 6700-6800": 0.9, # check again
+    "C III 6970-7100": 0.9,
+    "He I 17100-17630":default , # too much narrow peaks
+    "Mystery 20500-21000": 0.9
+},
+'HD  32228':{
+    "O V 3100-3175": 0.85,
+    "C IV 3650-3900": 0.97,
+    "O VI 5210-5340": 0.9,
+    "C IV 5350-5540":0.9 ,
+    "C III 6700-6800":0.92 , #check again
+    "He I 17100-17630":0.9 ,
+    "Mystery 20500-21000": 0.9
+},
+'HD  32257':{
+    "O V 3100-3175": 0.9,
+    "O VI 5210-5340": default, # epoch 4 has a big narrow absorption line which alters the CCF, but the parabola ignores it so its fine
+    "Mystery 20500-21000": 0.9
+},
+'HD 269888':{
+    "O V 3100-3175": 0.85,
+    "C IV 5350-5540": default, # check after removing epoch 6
+    "He I 17100-17630": default, # check after removing epoch 3
+},
+'HD  36156':{
+    "He I 17100-17630": default, # check again
+    "Mystery 20500-21000": 0.9
+},
+'H2013 LMCe  584':{
+    "O V 3100-3175": 0.9,
+    "C IV 5350-5540":0.85 , #maybe throw ep3
+    "C III 6700-6800": 0.9, #check again
+    "He I 17100-17630": default, #maybe throw ep 3 cuz of narrow peaks
+},
+'RMC 140':{
+    "O V 3100-3175": default,
+    "O IV 3350-3480": default,
+    "C IV 3650-3900": 0.85,
+    "O VI 5210-5340": 0.85,
+    "C III 6700-6800":0.9 ,
+    "He I 17100-17630":default , # gotta remove the narrow peaks with probably robust mean
+},
+'HD  32402':{
+    "O V 3100-3175": 0.9,
+    "O VI 5210-5340":default , # maybe reduscing the velocity field so it wont reach the horrific noise
+    "C IV 5350-5540": 0.9,
+    "He I 17100-17630":default ,# gotta remove the narrow peaks with probably robust mean
+    "Mystery 20500-21000": 0.9
+},
+'Brey  70a':{
+    "O V 3100-3175":default ,
+    "O IV 3350-3480": 0.9,
+    "C IV 3650-3900": 0.7,
+    "He II 4686": default, # Very variable! seems binary but might not be
+    "O VI 5210-5340": default, # gotta remove narrow peaks or reduce velocity range
+    "C IV 5350-5540": 0.9, # gotta remove narrow peaks or reduce velocity range
+    "C III 6700-6800": 0.8, # gotta check again and also reduce narrow peaks and velocity range
+    "He I 17100-17630":default , #try to remove the peaks
+    "Mystery 20500-21000": default #try to remove the peaks
+},
+'Brey  16a':{
+    "O V 3100-3175": 0.85,
+    "C IV 3650-3900": 0.9, #check again after removing peaks
+    "O VI 5210-5340": 0.9, #check after removing peaks
+    "C IV 5350-5540":0.9 , #check after removing peaks
+    "C III 6700-6800":0.85 , #check after removing peaks
+    "C III 6970-7100": 0.9,
+    "He I 17100-17630":0.9 ,#check after removing peaks
+    "Mystery 20500-21000": 0.85
+},
+'Brey  93':{
+    "O V 3100-3175":0.85 , #remove peaks
+    "O VI 5210-5340":0.92 ,
+    "C IV 5350-5540":0.9 , #check after removing peaks
+    "C III 6700-6800": 0.85,
+    "He I 17100-17630":default , #check after removing peaks
+    "Mystery 20500-21000": 0.9
+},
+'Brey  90a':{
+    "O V 3100-3175": 0.85, #check after removing peaks
+    "O IV 3350-3480": 0.9,
+    "C IV 3650-3900": default, # very wierd absorption lines and epoch 3 has it as very narow emission
+    "O VI 5210-5340": default,#check after removing peaks
+    "C IV 5350-5540": default, #check after removing peaks
+    "C III 6700-6800": default, # again very weird absoprtion lines
+    "C III 6970-7100":default , #check after removing peaks
+    "He I 17100-17630": default, # gotta check again and also reduce narrow peaks and velocity range (maybe)
+    "Mystery 20500-21000": 0.9
+},
+'HD 269891':{
+    "O V 3100-3175": 0.75,
+    "C III 6700-6800": default, # can only see absorption line
+    "He I 17100-17630": default, # can only see absorption lines
+    "Mystery 20500-21000": 0.9
+    }
+}
 
 # Raw data path
 raw_data_path = '../Data'

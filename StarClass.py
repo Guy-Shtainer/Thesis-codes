@@ -40,7 +40,7 @@ import re
 
 
 class Star:
-    def __init__(self, star_name, data_dir, backup_dir, to_print=True):
+    def __init__(self, star_name, data_dir, backup_dir, to_print=False):
         """
         Initialize the Star with an identifier and a dictionary of file paths.
         file_paths: A nested dictionary organized by epochs, sub-exposures, and bands.
@@ -63,8 +63,8 @@ class Star:
 
     ########################################                 Printing                       ########################################
 
-    def print(self, text, to_print=True):
-        if to_print and self.to_print:
+    def print(self, text):
+        if self.to_print:
             print(text)
 
     ########################################                 File Handleing                      ########################################
@@ -84,7 +84,7 @@ class Star:
         """
         # Check if the specified epoch exists for the star
         if f'epoch{epoch_number}' not in self.observation_dict:
-            print(f"Epoch '{epoch_number}' not found for star '{self.star_name}'")
+            self.print(f"Epoch '{epoch_number}' not found for star '{self.star_name}'")
             return None
 
         epoch_data = self.observation_dict[f'epoch{epoch_number}']
@@ -101,13 +101,13 @@ class Star:
                 filename = filename[:-15] + ':' + filename[-14:-12] + ':' + filename[-11:-8] + f'{num}'.zfill(
                     3) + '.fits'
                 fits_directory = os.path.join(self.data_dir, self.star_name, f'epoch{epoch_number}', band, '2D image')
-                print(fits_directory)
+                self.print(fits_directory)
                 fits_file = glob.glob(os.path.join(fits_directory, '**', '*.fits'), recursive=True)
-                print(fits_file)
+                self.print(fits_file)
                 return fits_file[0]
                 return os.path.join(self.data_dir, self.star_name, f'epoch{epoch_number}', band, '2D image', filename)
         else:
-            print(f"Band '{band}' not found in epoch '{epoch_number}")
+            self.print(f"Band '{band}' not found in epoch '{epoch_number}")
             return None
 
     ########################################                                     ########################################
@@ -160,12 +160,12 @@ class Star:
 
                 # If property_to_delete is empty, prompt for input
                 if not property_to_delete:
-                    print(f"Error: 'property_to_delete' is empty. Please specify a file or folder name.")
+                    self.print(f"Error: 'property_to_delete' is empty. Please specify a file or folder name.")
                     continue
 
                 # Construct the full path
                 property_path = os.path.join(output_dir, property_to_delete + '.npz')
-                print(f'property_path is {property_path}')
+                self.print(f"property_path is {property_path}")
 
                 # Check if exact match exists
                 if os.path.isfile(property_path):
@@ -180,8 +180,9 @@ class Star:
                     if matching_files:
                         self._handle_matching_files(matching_files, backup_flag, delete_all_in_folder)
                     else:
-                        print(
-                            f"Error: No file or folder matching '{property_to_delete}' found in '{output_dir}' for star '{self.star_name}', epoch '{epoch_num}', band '{band}'.")
+                        self.print(
+                            f"Error: No file or folder matching '{property_to_delete}' found in '{output_dir}' for star '{self.star_name}', epoch '{epoch_num}', band '{band}'."
+                        )
 
     ########################################                                     ########################################
 
@@ -372,10 +373,10 @@ class Star:
                         # The file contains multiple arrays or variables
                         return dict(data)
             else:
-                print(f"Unsupported file format: '{file_path}'")
+                self.print(f"Unsupported file format: '{file_path}'")
                 return None
         except Exception as e:
-            print(f"Error loading file '{file_path}': {e}")
+            self.print(f"Error loading file '{file_path}': {e}")
             return None
 
     ########################################                                     ########################################
@@ -458,7 +459,7 @@ class Star:
         else:
             # Save array or list using np.savez with a default variable name
             np.savez(output_path, data=property_data)
-        print(f"Property saved at {output_path}")
+        self.print(f"Property saved at {output_path}")
 
     ########################################                                     ########################################
 
@@ -490,7 +491,7 @@ class Star:
 
             # Move the existing file to the backup location
             os.rename(output_path, backup_path)
-            print(f"Backup created at {backup_path}")
+            self.print(f"Backup created at {backup_path}")
         else:
             raise FileNotFoundError(f"Cannot create backup, original file not found: {output_path}")
 
@@ -625,7 +626,9 @@ class Star:
 
         if not os.path.exists(output_dir):
             if self.to_print:
-                print(f"No output directory found for epoch {epoch_num}, band {band}")
+                self.print(
+                    f"No output directory found for epoch {epoch_num}, band {band}"
+                )
             if not from_backup:
                 return None
 
@@ -724,18 +727,16 @@ class Star:
                 # data = np.load(property_path, allow_pickle=True)
                 data = self._load_file(property_path)
                 if self.to_print:
-                    self.print(f"Loaded property from: {property_path}",to_print=self.to_print)
+                    self.print(f"Loaded property from: {property_path}")
                 return data
             except Exception as e:
                 self.print(f"Error loading property: {e}")
                 return None
         elif os.path.isdir(property_path):
-            if self.to_print:
-                print(f"Property '{property_name}' is a directory")
+            self.print(f"Property '{property_name}' is a directory")
             return property_path
         else:
-            if self.to_print:
-                print(f"Property '{property_name}' not found")
+            self.print(f"Property '{property_name}' not found")
             return None
 
     ########################################                                     ########################################
@@ -756,7 +757,7 @@ class Star:
         if band == None:
             band = 'combined'
         file_path = self.get_file_path(epoch_num, band)
-        print(file_path)
+        self.print(file_path)
 
         if not file_path:
             print("Error: Could not find the requested file.")
@@ -789,7 +790,7 @@ class Star:
         if band == None:
             band = 'COMBINED'
         file_path = self.get_file_path(epoch_num, band, D2=True)
-        print(file_path)
+        self.print(file_path)
 
         if not file_path:
             print("Error: Could not find the requested file.")
@@ -1473,12 +1474,12 @@ class Star:
                 base = idx * sep
                 y_off = base + (pair if entry['type'] == 'orig' else 0)
                 lbl = f"Ep {entry['epoch']}, {entry['band']} ({entry['type']})"
-                ax.plot(entry['wl'], entry['fl'] + y_off, label=lbl)
+                ax.plot(entry['wl']*10, entry['fl'] + y_off, label=lbl)
                 ax.hlines(y_off + 1,
                           entry['wl'].min(), entry['wl'].max(),
                           linestyles='--', colors='gray', linewidth=0.8)
 
-            ax.set_xlabel('Wavelength [nm]')
+            ax.set_xlabel('Wavelength [A]')
             ax.set_ylabel('Normalized Flux')
             ax.set_title(f"{self.star_name} — Bands: {', '.join(bands)}", fontsize=10)
             ax.legend(fontsize='small', ncol=2)

@@ -72,7 +72,7 @@ class ObservationManager:
         else:
             return Star(star_name=star_name, data_dir=data_dir, backup_dir=backup_dir, to_print = to_print)
 
-    def load_star_instance(self, star_name, data_dir = None, backup_dir = None, to_print = True):
+    def load_star_instance(self, star_name, data_dir = None, backup_dir = None, to_print = False):
         """
         Loads and returns a Star instance for the given star name.
     

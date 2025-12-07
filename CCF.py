@@ -77,8 +77,18 @@ class CCFclass:
     # internal core: parabola-fit cross-correlation                       #
     # ------------------------------------------------------------------ #
     def _crosscorreal(
-        self, Observation, Mask, CrossCorInds, sRange, N, veloRange, wavegridlog
+        self,
+        Observation,
+        Mask,
+        CrossCorInds,
+        sRange,
+        N,
+        veloRange,
+        wavegridlog,
+        obs_plot_clean=None,  # cleaned, NOT mean-subtracted
+        obs_plot_raw=None,  # raw,    NOT mean-subtracted
     ):
+        wavegridlog = wavegridlog*10
         CCFarr = np.array(
             [
                 self._CCF(np.copy(Observation), (np.roll(Mask, s))[CrossCorInds], N)
@@ -104,12 +114,12 @@ class CCFclass:
             self.Fit_Range_in_fraction * CCFMAX1 - CCFarr[IndMax + 1 :]
         )
 
-        # if len(LeftEdgeArr) == 0 or len(RightEdgeArr) == 0:
-        #     print("Can't find local maximum in CCF\n")
-        #     fig1, ax1 = plt.subplots()
-        #     ax1.plot(veloRange, CCFarr, color='C0', label=f'obs {self.star_name}')
-        #     plt.show()
-        #     return np.array([None, None, None, None])
+        if len(LeftEdgeArr) == 0 or len(RightEdgeArr) == 0:
+            print("Can't find local maximum in CCF\n")
+            fig1, ax1 = plt.subplots()
+            ax1.plot(veloRange, CCFarr, color='C0', label=f'obs {self.star_name}')
+            plt.show()
+            return np.array([None, None, None, None])
 
         IndFit1 = np.argmin(LeftEdgeArr)
         IndFit2 = np.argmin(RightEdgeArr) + IndMax + 1
@@ -140,9 +150,9 @@ class CCFclass:
             # units for labels based on nm flag
             wave_units = "nm" if self.nm else "Å"
             line_txt = (
-                f"{line_tag}  ({line_rng[0]:.0f}–{line_rng[1]:.0f} {wave_units})"
+                f"{line_tag}  ({line_rng[0]*10:.0f}–{line_rng[1]*10:.0f} {wave_units})"
                 if line_tag
-                else f"{line_rng[0]:.0f}–{line_rng[1]:.0f} {wave_units}"
+                else f"{line_rng[0]*10:.0f}–{line_rng[1]*10:.0f} {wave_units}"
             )
 
             # epoch/spectrum label parts
@@ -222,41 +232,55 @@ class CCFclass:
             else:
                 plt.close(fig1)
 
-            # -------- 2.  Spectrum vs template ------------------------------
+            # -------- 2.  Spectrum vs template (overlay; zero-mean all) -----------
             fig2, ax2 = plt.subplots(figsize=(10, 6))
+
+            # zero-mean helper
+            def _zm(y):
+                if y is None:
+                    return None
+                m = np.nanmean(y)
+                return y - (0.0 if (m is None or not np.isfinite(m)) else m)
+
+            # zero-mean versions for a fair visual comparison
+            y_raw   = _zm(obs_plot_raw)
+            y_clean = _zm(obs_plot_clean)
+            y_mask  = Mask - np.mean(Mask)  # already zero-mean
+
+            # Raw first (blue), then cleaned (green)
+            if y_raw is not None:
+                ax2.plot(
+                    wavegridlog[CrossCorInds], y_raw,
+                    label="Observation (raw)", color="steelblue", alpha=0.70,
+                )
+            if y_clean is not None:
+                ax2.plot(
+                    wavegridlog[CrossCorInds], y_clean,
+                    label="Observation (cleaned)", color="forestgreen", alpha=0.95,
+                )
+            else:
+                # fallback: what CCF used (zero-mean)
+                ax2.plot(
+                    wavegridlog[CrossCorInds], Observation,
+                    label="Observation (cleaned, zero-mean)", color="forestgreen", alpha=0.95,
+                )
+
+            # Templates (zero-mean)
             ax2.plot(
-                wavegridlog[CrossCorInds],
-                Observation,
-                label="Observation",
-                color="k",
-                alpha=0.8,
+                wavegridlog, y_mask,
+                label="Template (unshifted)", color="orchid", alpha=0.9,
             )
             ax2.plot(
-                wavegridlog,
-                Mask - np.mean(Mask),
-                label="Template (unshifted)",
-                color="orchid",
-                alpha=0.9,
-            )
-            ax2.plot(
-                wavegridlog * (1 + RV / clight),
-                Mask - np.mean(Mask),
-                label="Template (shifted)",
-                color="turquoise",
-                alpha=0.9,
+                wavegridlog * (1 + RV / clight), y_mask,
+                label="Template (shifted)", color="turquoise", alpha=0.9,
             )
 
-            # ax2.set_title(f"Spectra  |  {star_name}  |  Epoch {epoch_str}  |  {line_txt}",
-            #               fontsize=14, weight='bold')
-            # ax2.set_xlabel(r'Wavelength [nm]')
             ax2.set_title(
                 f"Spectra  |  {star_name}  |  {epoch_txt}{spec_txt}  |  {line_txt}",
-                fontsize=14,
-                weight="bold",
+                fontsize=14, weight="bold",
             )
-            ax2.set_xlabel(rf"Wavelength [{wave_units}]")  # nm or Å
-
-            ax2.set_ylabel("Normalized Flux")
+            ax2.set_xlabel(rf"Wavelength [{wave_units}]")
+            ax2.set_ylabel("Normalized Flux (zero-mean)")
             ax2.grid(ls="--", alpha=0.4)
             ax2.legend()
             plt.tight_layout()
@@ -304,46 +328,68 @@ class CCFclass:
     # ------------------------------------------------------------------ #
     def _estimate_snr_robust(self, w, f, for_ew: bool = False):
         """
-        SNR = 1/std. If for_ew=True, estimate the noise in near-line windows:
-        a 5 Å (or 0.5 nm when self.nm=True) window immediately LEFT of each
-        emission-line interval in self.CrossCorRangeA (i.e., [λ_left-Δ, λ_left]).
-        Otherwise fall back to self.S2Nrange (old behavior).
-        If no points are available in the chosen windows, fall back to the
-        continuum-outside-lines std, then to global std.
+        SNR = 1/std.
+
+        If for_ew=True:
+            Calculates noise in the immediate continuum 'shoulders' of the line.
+            It looks at a 5 Å (or 0.5 nm) window to the LEFT and to the RIGHT
+            of each interval in self.CrossCorRangeA.
+
+            Windows: [λ_start - Δ, λ_start]  AND  [λ_end, λ_end + Δ]
+
+        Otherwise:
+            Falls back to self.S2Nrange (user defined fixed continuum).
         """
         # --- choose where to measure the noise ---
         if for_ew:
             width = 0.5 if self.nm else 5.0  # 0.5 nm ≡ 5 Å
-            # one window per line range: [left-edge - width, left-edge]
-            search_ranges = [
-                [r[0] - width, r[0]] for r in np.atleast_2d(self.CrossCorRangeA)
-            ]
+            search_ranges = []
+
+            # Create a Left and Right window for every line range
+            for r in np.atleast_2d(self.CrossCorRangeA):
+                # Left shoulder: [Start - width, Start]
+                search_ranges.append([r[0] - width, r[0]])
+                # Right shoulder: [End, End + width]
+                search_ranges.append([r[1], r[1] + width])
         else:
             search_ranges = self.S2Nrange
 
-        # --- measure noise as std in each available window; take median ---
+        # --- measure noise as std in each available window ---
         noises = []
-        for lo, hi in np.atleast_2d(search_ranges):
+        for lo, hi in search_ranges:
+            # Ensure order
             if hi <= lo:
                 lo, hi = hi, lo
+
+            # Create mask for this small window
             m = (w > lo) & (w < hi)
-            if np.any(m):
+
+            # Only calculate if we have enough points (e.g. > 3 pixels)
+            if np.count_nonzero(m) > 3:
                 noises.append(float(np.std(f[m])))
 
+        # --- Aggregation ---
         if len(noises) == 0:
-            # exclude the line windows to approximate continuum
+            # Fallback 1: Try to use everything NOT in the line ranges
             line_mask = np.zeros_like(w, dtype=bool)
             for r in np.atleast_2d(self.CrossCorRangeA):
                 line_mask |= (w > r[0]) & (w < r[1])
             cont = ~line_mask
-            if np.any(cont):
+
+            if np.count_nonzero(cont) > 10:
                 noise = float(np.std(f[cont]))
             else:
+                # Fallback 2: Global STD (Desperation mode)
                 noise = float(np.std(f))
         else:
-            noise = float(np.median(noises))
+            # We use Median instead of Mean.
+            # Why? If the Left window is clean but the Right window hits a cosmic ray,
+            # the Mean would be skewed high. The Median will pick the cleaner value.
+            # (If there are only 2 values, Median equals Mean, which is also fine).
+            noise = float(np.min(noises))
 
-        snr = (1.0 / noise) if (noise > 0 and np.isfinite(noise)) else np.inf
+        # Avoid division by zero
+        snr = (1.0 / noise) if (noise > 1e-9 and np.isfinite(noise)) else 0.0
         return snr, noise
 
     def _ew_sigma_rule_of_thumb(self, w, f):
@@ -394,7 +440,16 @@ class CCFclass:
     # ------------------------------------------------------------------ #
     # public: single-spectrum RV                                          #
     # ------------------------------------------------------------------ #
-    def compute_RV(self, obs_wave, obs_flux, tpl_wave, tpl_flux):
+    def compute_RV(
+        self,
+        obs_wave,
+        obs_flux,
+        tpl_wave,
+        tpl_flux,
+        clean=True,  # << NEW: clean inside compute_RV
+        clean_kwargs=None,  # << NEW: overrides for the cleaner
+    ):
+
         """
         Parameters
         ----------
@@ -458,13 +513,7 @@ class CCFclass:
         )(wavegridlog)
         # print(f'plotting new mask')
         # plt.plot(wavegridlog, Mask, 'k')
-        flux = interp1d(
-            obs_wave,
-            np.nan_to_num(obs_flux),
-            bounds_error=False,
-            fill_value=1.0,
-            kind="cubic",
-        )(wavegridlog[CrossCorInds])
+
         # Clean spikes using rolling window
         # window_size = 20
         # sigma_thresh = 3
@@ -509,74 +558,175 @@ class CCFclass:
         #                 flux[max(0, i + j - 1)] + flux[min(len(flux) - 1, i + j + 1)]
         #             ) / 2
 
+        # ================= CLEANING STEP (NEW) =================
+        # Keep the raw flux as provided to this method
+        obs_flux_raw = np.asarray(obs_flux, dtype=float)
+
+        if ('C IV 5801-5812' in self.line_tag) and True:
+            parts_to_split = 8
+            deg_to_use = 6
+            sigma_pos = 7
+            sigma_neg = 8
+        else:
+            parts_to_split = 8
+            deg_to_use = 6
+            sigma_neg=4
+            sigma_pos=5
+
+        # Defaults that mimic your double_ccf cleaner setup
+        default_clean_kwargs = dict(
+            focus_range=None,  # uses self.CrossCorRangeA internally
+            n_iter=100,
+            n_stages=20,
+            n_split=parts_to_split,
+            sample_frac=0.9,
+            deg=deg_to_use,
+            sigma_clip_neg=sigma_neg,
+            sigma_clip_pos=sigma_pos,
+            random_state=42,
+            plot=False,  # avoid extra cleaning plots here
+            add_noise=True,
+            noise_source="leftwin",
+        )
+        if clean_kwargs is not None:
+            default_clean_kwargs.update(clean_kwargs)
+
+        if clean:
+            obs_flux_clean, _, _ = self.clean_line_with_iterative_poly(
+                wave=obs_wave,
+                flux=obs_flux_raw,
+                **default_clean_kwargs,
+            )
+        else:
+            obs_flux_clean = obs_flux_raw.copy()
+        # ======================================================
+
+        # Interpolate CLEANED flux to the log grid segment used for CCF
+        flux_ccf = interp1d(
+            obs_wave,
+            np.nan_to_num(obs_flux_clean),
+            bounds_error=False,
+            fill_value=1.0,
+            kind="cubic",
+        )(wavegridlog[CrossCorInds])
+
+        # Build plotting copies (not mean-subtracted)
+        obs_plot_clean = interp1d(
+            obs_wave,
+            np.nan_to_num(obs_flux_clean),
+            bounds_error=False,
+            fill_value=1.0,
+            kind="cubic",
+        )(wavegridlog[CrossCorInds])
+
+        obs_plot_raw = interp1d(
+            obs_wave,
+            np.nan_to_num(obs_flux_raw),
+            bounds_error=False,
+            fill_value=1.0,
+            kind="cubic",
+        )(wavegridlog[CrossCorInds])
+
+        # ---- run CCF on zero-mean CLEANED segment ----
         CCFeval = self._crosscorreal(
-            np.copy(flux - np.mean(flux)),
+            np.copy(flux_ccf - np.mean(flux_ccf)),
             np.copy(Mask - np.mean(Mask)),
             CrossCorInds,
             sRange,
             N,
             veloRange,
             wavegridlog,
+            obs_plot_clean=obs_plot_clean,  # << show cleaned
+            obs_plot_raw=obs_plot_raw,  # << also show raw
         )
         return CCFeval[0], CCFeval[1]
 
     def clean_line_with_iterative_poly(
-            self,
-            wave,
-            flux,
-            focus_range=None,
-            n_iter=300,
-            n_stages=3,
-            sample_frac=0.7,
-            deg=5,
-            # <<< asymmetric clipping >>>
-            sigma_clip_pos=3.0,      # for positive residuals (spikes)
-            sigma_clip_neg=2.0,      # for negative residuals (absorptions)
-            random_state=None,
-            plot=True,
-            ax=None,
-            # noise injection at replaced pixels (unchanged)
-            add_noise=True,
-            noise_source='residual',   # 'residual' | 'leftwin' | 'local' | 'global'
-            noise_floor=1e-6,
-        ):
+        self,
+        wave,
+        flux,
+        focus_range=None,
+        n_iter=300,
+        n_stages=3,
+        sample_frac=0.7,
+        deg=5,
+        sigma_clip_pos=3.0,
+        sigma_clip_neg=2.0,
+        random_state=None,
+        plot=True,
+        ax=None,
+        add_noise=True,
+        noise_source="residual",
+        noise_floor=1e-6,
+        n_split=1,  # <--- NEW ARGUMENT
+    ):
         """
-        Staged cleaning with asymmetric σ-clipping (no upper-envelope sampling).
+        Staged cleaning with asymmetric σ-clipping.
+        Supports splitting the range into n_split segments for piecewise fitting.
         """
         wave = np.asarray(wave, dtype=float)
         flux = np.asarray(flux, dtype=float)
 
-        # Which ranges to clean?
+        # 1. Determine base ranges (usually the whole CrossCorRangeA)
         if focus_range is None:
-            ranges = [tuple(r) for r in np.atleast_2d(self.CrossCorRangeA)]
+            ranges = [
+                tuple(
+                    [
+                        r[0] * (1 - 1.1 * self.CrossVeloMax / clight),
+                        r[1] * (1 - 1.1 * self.CrossVeloMin / clight),
+                    ]
+                )
+                for r in np.atleast_2d(self.CrossCorRangeA)
+            ]
         else:
             lo, hi = focus_range
             if hi <= lo:
                 raise ValueError("focus_range must satisfy lo < hi.")
             ranges = [(lo, hi)]
 
-        combined_model = np.full_like(flux, np.nan, dtype=float)
-        combined_repl  = np.zeros_like(flux, dtype=bool)
-        cleaned_flux   = flux.copy()
+        # 2. NEW: Apply Splitting Logic
+        # We subdivide the base ranges into n_split smaller chunks
+        processing_ranges = []
+        for start, end in ranges:
+            if n_split > 1:
+                # Calculate split points (e.g., 5 parts = 6 boundaries)
+                boundaries = np.linspace(start, end, n_split + 1)
+                for i in range(n_split):
+                    # Create segment (b_i, b_{i+1})
+                    # Note: Adjacent segments share a boundary point.
+                    # This ensures no data gaps.
+                    processing_ranges.append((boundaries[i], boundaries[i + 1]))
+            else:
+                processing_ranges.append((start, end))
 
+        # Setup outputs
+        combined_model = np.full_like(flux, np.nan, dtype=float)
+        combined_repl = np.zeros_like(flux, dtype=bool)
+        cleaned_flux = flux.copy()
         rng = np.random.default_rng(random_state)
 
+        # --- Internal Worker Function (Unchanged) ---
         def _clean_one_range_staged(w, f_in, lo, hi):
             in_mask = (w >= lo) & (w <= hi)
-            if np.count_nonzero(in_mask) < (deg + 1):
-                return f_in.copy(), np.full_like(f_in, np.nan, dtype=float), np.zeros_like(f_in, dtype=bool)
+            # Safety check for too few points
+            if np.count_nonzero(in_mask) < (deg + 2):
+                return (
+                    f_in.copy(),
+                    np.full_like(f_in, np.nan, dtype=float),
+                    np.zeros_like(f_in, dtype=bool),
+                )
 
             xi = w[in_mask]
             yi = f_in[in_mask].copy()
-            M  = xi.size
+            M = xi.size
 
             # per-iteration sample size
-            k = max(deg + 1, int(np.ceil(sample_frac * M)))
+            k = max(3 * deg + 1, int(np.ceil(sample_frac * M)))
             k = min(k, M)
 
             # normalize x
-            xc  = xi.mean()
-            xs  = xi.std() if xi.std() > 0 else 1.0
+            xc = xi.mean()
+            xs = xi.std() if xi.std() > 0 else 1.0
             xi0 = (xi - xc) / xs
 
             n_stages_eff = max(1, int(n_stages))
@@ -595,23 +745,29 @@ class CCFclass:
                 model_i = preds.mean(axis=0)
 
                 # --- robust residual σ & asymmetric clipping ---
-                res  = yi - model_i
-                med  = np.median(res)
-                mad  = np.median(np.abs(res - med))
-                sigma = 1.4826 * mad if mad > 0 else (np.std(res) if np.std(res) > 0 else 0.0)
+                res = yi - model_i
+                med = np.median(res)
+                mad = np.median(np.abs(res - med))
+                sigma = (
+                    1.4826 * mad
+                    if mad > 0
+                    else (np.std(res) if np.std(res) > 0 else 0.0)
+                )
                 sigma = max(float(sigma), float(noise_floor))
 
                 r = res - med
-                outliers_local = (r >  sigma_clip_pos * sigma) | (r < -sigma_clip_neg * sigma)
+                outliers_local = (r > sigma_clip_pos * sigma) | (
+                    r < -sigma_clip_neg * sigma
+                )
 
                 # --- choose noise scale for inserts ---
-                if noise_source == 'residual':
+                if noise_source == "residual":
                     noise_sigma = sigma
-                elif noise_source == 'leftwin':
-                    _, noise_sigma = self._estimate_snr_robust(w, f_in, for_ew=True)  # returns (snr, noise)
-                elif noise_source == 'local':
+                elif noise_source == "leftwin":
+                    _, noise_sigma = self._estimate_snr_robust(w, f_in, for_ew=True)
+                elif noise_source == "local":
                     noise_sigma = float(np.std(f_in[in_mask]))
-                elif noise_source == 'global':
+                elif noise_source == "global":
                     noise_sigma = float(np.std(f_in))
                 else:
                     noise_sigma = sigma
@@ -642,9 +798,12 @@ class CCFclass:
             f_out[in_mask] = yi
             return f_out, model_full_final, replaced_union
 
-        # Clean all ranges sequentially on evolving flux
-        for (lo, hi) in ranges:
-            cleaned_flux, model_full, replaced_full = _clean_one_range_staged(wave, cleaned_flux, lo, hi)
+        # 3. Clean all ranges sequentially on evolving flux
+        for lo, hi in processing_ranges:
+            cleaned_flux, model_full, replaced_full = _clean_one_range_staged(
+                wave, cleaned_flux, lo, hi
+            )
+            # Merge models into the combined array
             msel = ~np.isnan(model_full)
             combined_model[msel] = model_full[msel]
             combined_repl |= replaced_full
@@ -654,51 +813,108 @@ class CCFclass:
             if ax is None:
                 fig, ax = plt.subplots(figsize=(9, 5))
             units = "nm" if self.nm else "Å"
-            _ranges = [tuple(r) for r in np.atleast_2d(self.CrossCorRangeA)] if focus_range is None \
-                    else [(min(focus_range[0], focus_range[1]), max(focus_range[0], focus_range[1]))]
+
+            # For plotting, we just show the full extent
+            full_extent_ranges = (
+                [tuple(r) for r in np.atleast_2d(self.CrossCorRangeA)]
+                if focus_range is None
+                else [
+                    (
+                        min(focus_range[0], focus_range[1]),
+                        max(focus_range[0], focus_range[1]),
+                    )
+                ]
+            )
+
             mask_total = np.zeros_like(wave, dtype=bool)
-            for lo, hi in _ranges:
+            for lo, hi in full_extent_ranges:
                 mask_total |= (wave >= lo) & (wave <= hi)
 
-            f_plot = flux.copy();        f_plot[~mask_total] = np.nan
-            c_plot = cleaned_flux.copy(); c_plot[~mask_total] = np.nan
+            f_plot = flux.copy()
+            f_plot[~mask_total] = np.nan
+            c_plot = cleaned_flux.copy()
+            c_plot[~mask_total] = np.nan
             m_plot = combined_model.copy()
 
-            ax.plot(wave, f_plot, label="original", alpha=0.8)
+            ax.plot(wave, f_plot, label="original", alpha=0.8, lw=1)
             if np.any(~np.isnan(m_plot)):
-                ax.plot(wave, m_plot, ls="--", label=f"avg deg-{deg} model (final stage)")
-            ax.plot(wave, c_plot, alpha=0.9, label="cleaned")
+                ax.plot(
+                    wave,
+                    m_plot,
+                    ls="--",
+                    color="black",
+                    alpha=0.6,
+                    label=f"model (split={n_split}, deg={deg})",
+                )
+            ax.plot(wave, c_plot, alpha=0.9, label="cleaned", lw=1.2)
 
             repl_in = combined_repl & mask_total
             if np.any(repl_in):
-                ax.scatter(wave[repl_in], flux[repl_in], s=18, color="red", label="replaced")
+                ax.scatter(
+                    wave[repl_in],
+                    flux[repl_in],
+                    s=18,
+                    color="red",
+                    label="replaced",
+                    zorder=5,
+                )
 
-            lo_all = min(r[0] for r in _ranges); hi_all = max(r[1] for r in _ranges)
-            pad = 0.05 * (hi_all - lo_all) if hi_all > lo_all else (0.5 if self.nm else 5.0)
+            # Draw vertical lines to show split points if split > 1
+            if n_split > 1:
+                for start, end in ranges:
+                    boundaries = np.linspace(start, end, n_split + 1)
+                    for b in boundaries[1:-1]:  # Skip start/end
+                        ax.axvline(b, color="gray", linestyle=":", alpha=0.5)
+
+            lo_all = min(r[0] for r in full_extent_ranges)
+            hi_all = max(r[1] for r in full_extent_ranges)
+            pad = (
+                0.05 * (hi_all - lo_all)
+                if hi_all > lo_all
+                else (0.5 if self.nm else 5.0)
+            )
             ax.set_xlim(lo_all - pad, hi_all + pad)
-            ax.set_xlabel(f"Wavelength [{units}]"); ax.set_ylabel("Normalized flux")
-            ax.set_title(f"Cleaning {self.star_name} | {self.line_tag or 'emission line'}")
-            ax.legend(); ax.grid(ls="--", alpha=0.35); plt.tight_layout()
+            ax.set_xlabel(f"Wavelength [{units}]")
+            ax.set_ylabel("Normalized flux")
+            ax.set_title(
+                f"Cleaning {self.star_name} | {self.line_tag or 'emission line'}"
+            )
+            ax.legend()
+            ax.grid(ls="--", alpha=0.35)
+            plt.tight_layout()
 
             if self.savePlot:
-                clean_star = re.sub(r"[^A-Za-z0-9_-]", "_", (self.star_name or "unknown"))
+                clean_star = re.sub(
+                    r"[^A-Za-z0-9_-]", "_", (self.star_name or "unknown")
+                )
                 epoch_str = "NA" if self.epoch is None else str(self.epoch)
-                spec_str  = "" if self.spectrum is None else (f"_S{self.spectrum}")
+                spec_str = "" if self.spectrum is None else (f"_S{self.spectrum}")
                 out_dir = Path("../output") / clean_star / "CLEAN" / (self.run_ts or "")
                 out_dir.mkdir(parents=True, exist_ok=True)
-                plt.savefig(out_dir / f"{clean_star}_MJD{epoch_str}{spec_str}_{self.line_tag or 'line'}_CLEAN.png", dpi=150)
+                plt.savefig(
+                    out_dir
+                    / f"{clean_star}_MJD{epoch_str}{spec_str}_{self.line_tag or 'line'}_CLEAN.png",
+                    dpi=150,
+                )
             plt.show()
-            try: plt.close(fig)
-            except NameError: pass
+            try:
+                plt.close(fig)
+            except NameError:
+                pass
 
         return cleaned_flux, combined_model, combined_repl
-
 
     # ------------------------------------------------------------------ #
     # public: two-pass RV + coadd                                         #
     # ------------------------------------------------------------------ #
     def double_ccf(
-        self, obs_list, tpl_wave, tpl_flux, return_coadd=False, return_meta=False
+        self,
+        obs_list,
+        tpl_wave,
+        tpl_flux,
+        return_coadd=False,
+        return_meta=False,
+        skip_clean_epochs=None,
     ):
         """
         Two-pass CCF with EW-based epoch gating.
@@ -717,25 +933,50 @@ class CCFclass:
             if return_coadd and return_meta:
                 -> (round1, round2, (wave_coadd, flux_coadd), failed_indices, ew_meta)
         """
+        # Handle default None
+        if skip_clean_epochs is None:
+            skip_clean_epochs = set()
+        else:
+            skip_clean_epochs = set(skip_clean_epochs)
+
         cleaned_obs_list = []
         for i, (ep, w, f) in enumerate(obs_list):
-            # Plot first, or all, according to class flags; otherwise suppress
-            do_plot = self.PlotAll or (self.PlotFirst and (i == 0)) or self.savePlot
-            f_clean, _, _ = self.clean_line_with_iterative_poly(
-                wave=w,
-                flux=f,
-                focus_range=None,  # << uses self.CrossCorRangeA internally
-                n_iter=3000,
-                n_stages=30,
-                sample_frac=0.7,
-                deg=18,
-                sigma_clip_neg=3,
-                sigma_clip_pos=4,
-                random_state=42,
-                noise_source='leftwin',
-                plot=True,
-            )
-            print(f"cleaned epoch {ep} of line {self.line_tag}")
+            if ep in skip_clean_epochs:
+                print(f"Info: Skipping cleaning for epoch {ep}")
+                f_clean = f
+            else:
+                # --- NEW: Check if this is the problematic line ---
+                # Note: 'self.line_tag' stores the current line being processed
+                if ('C IV 5801-5812' in self.line_tag):
+                    parts_to_split = 8
+                    deg_to_use = 6
+                    sigma_pos = 7
+                    sigma_neg = 8
+                else:
+                    parts_to_split = 8
+                    deg_to_use = 6
+                    sigma_neg=4
+                    sigma_pos=5
+
+                f_clean, _, _ = self.clean_line_with_iterative_poly(
+                    wave=w,
+                    flux=f,
+                    n_split=parts_to_split,  # <--- Pass the new argument here
+                    
+                    # Your other robust settings from before:
+                    n_iter=100,          
+                    n_stages=20,
+                    sample_frac=0.9,    
+                    deg=deg_to_use, # You might be able to LOWER this if you are splitting!
+                            # e.g., deg=5 might be enough if you split into 5 small chunks
+                    sigma_clip_neg=sigma_neg,  
+                    sigma_clip_pos=sigma_pos,  
+                    random_state=42,
+                    noise_source="leftwin",
+                    plot=False,
+                )
+                # print(f"cleaned epoch {ep} of line {self.line_tag}")
+
             cleaned_obs_list.append((ep, w, f_clean))
 
         obs_list = cleaned_obs_list
@@ -744,7 +985,7 @@ class CCFclass:
         include_mask = []
         failed_indices = []
         for ep, w, f in obs_list:
-            info = self._ew_gate(w, f, ksig=5.0)
+            info = self._ew_gate(w, f, ksig=10.0)
             ew_meta.append(info)
             ok = bool(info["detected"])
             include_mask.append(ok)
@@ -760,7 +1001,7 @@ class CCFclass:
         print("Calculating first-pass RVs (EW-gated)…")
         for i, (ep, w, f) in enumerate(obs_list):
             if include_mask[i]:
-                rv, sig = self.compute_RV(w, f, tpl_wave, tpl_flux)
+                rv, sig = self.compute_RV(w, f, tpl_wave, tpl_flux, clean=False)
             else:
                 rv, sig = (None, None)
             r1.append((rv, sig))
@@ -814,7 +1055,7 @@ class CCFclass:
         r2_full = [None] * len(obs_list)
         for i in idx_keep:
             ep, w, f = obs_list[i]
-            r2_full[i] = self.compute_RV(w, f, w_common, coadd)
+            r2_full[i] = self.compute_RV(w, f, w_common, coadd, clean=False)
 
         # Fill excluded ones with (None, None) so the output lines up with obs_list
         r2 = [val if val is not None else (None, None) for val in r2_full]
