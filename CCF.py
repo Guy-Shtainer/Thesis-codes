@@ -23,7 +23,6 @@ import re
 
 clight = 2.9979e5  # km s⁻¹
 
-
 class CCFclass:
     # ------------------------------------------------------------------ #
     # constructor                                                         #
@@ -95,6 +94,7 @@ class CCFclass:
                 for s in sRange
             ]
         )
+
         IndMax = np.argmax(CCFarr)
         # CCFarr = CCFarr[:IndMax].concatenate(CCFarr[IndMax+1:])
         # print(f'CCFMax is {CCFarr[IndMax]} at index {IndMax}')
@@ -196,7 +196,7 @@ class CCFclass:
             )
             # Add horizontal line at fit range fraction
             ax1.axhline(
-                y=self.Fit_Range_in_fraction * CCFMAX1,
+                y=self.Fit_Range_in_fraction * np.max(CCFarr),
                 color="gray",
                 linestyle="--",
                 label=f"Fit Range ({self.Fit_Range_in_fraction:.2f}×max)",
@@ -567,6 +567,22 @@ class CCFclass:
             deg_to_use = 6
             sigma_pos = 7
             sigma_neg = 8
+        elif ((self.star_name == 'Brey  16a' and (self.line_tag == 'O VI 5210-5340' or self.line_tag == 'C IV 17396')) or
+              self.star_name == 'HD 269888' and (self.line_tag == "He II 5412 & C IV 5471")):
+            parts_to_split = 2
+            deg_to_use = 10
+            sigma_neg = 4
+            sigma_pos = 5
+        elif (self.star_name == 'Brey  58a' and self.line_tag == "C IV 20842"):
+            parts_to_split = 10
+            deg_to_use = 8
+            sigma_neg = 4
+            sigma_pos = 5
+        elif (self.star_name == 'Brey  58a' and self.line_tag == "C IV 17396"):
+            parts_to_split = 2
+            deg_to_use = 4
+            sigma_neg = 3
+            sigma_pos = 4
         else:
             parts_to_split = 8
             deg_to_use = 6
@@ -641,34 +657,60 @@ class CCFclass:
         )
         return CCFeval[0], CCFeval[1]
 
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from pathlib import Path
+    import re
+
+    # Assuming 'clight' is defined globally or in the class,
+    # if not, define it: clight = 299792.458
+
     def clean_line_with_iterative_poly(
-        self,
-        wave,
-        flux,
-        focus_range=None,
-        n_iter=300,
-        n_stages=3,
-        sample_frac=0.7,
-        deg=5,
-        sigma_clip_pos=3.0,
-        sigma_clip_neg=2.0,
-        random_state=None,
-        plot=True,
-        ax=None,
-        add_noise=True,
-        noise_source="residual",
-        noise_floor=1e-6,
-        n_split=1,  # <--- NEW ARGUMENT
+            self,
+            wave,
+            flux,
+            focus_range=None,
+            n_iter=300,
+            n_stages=3,
+            sample_frac=0.7,
+            deg=5,
+            sigma_clip_pos=3.0,
+            sigma_clip_neg=2.0,
+            random_state=None,
+            plot=True,
+            ax=None,
+            add_noise=True,
+            noise_source="residual",
+            noise_floor=1e-6,
+            n_split=1,
+            clean_absorption=False,  # <--- NEW ARGUMENT
     ):
         """
         Staged cleaning with asymmetric σ-clipping.
-        Supports splitting the range into n_split segments for piecewise fitting.
+
+        Args:
+            clean_absorption (bool): If True, enables aggressive cleaning of absorption lines
+                                     (negative features) by pre-filling deep dips and using
+                                     stricter negative clipping thresholds.
         """
         wave = np.asarray(wave, dtype=float)
         flux = np.asarray(flux, dtype=float)
 
-        # 1. Determine base ranges (usually the whole CrossCorRangeA)
+        # 0. Adjust Logic for Absorption Cleaning
+        # If we want to clean absorption, we must not be lenient with negative outliers.
+        # We also want to be very careful NOT to clip the positive emission peaks.
+        if clean_absorption:
+            # Tighter negative clip to catch the "wings" of absorption lines
+            eff_sigma_clip_neg = 1.3
+            # Looser positive clip so we don't accidentally cut the emission line top
+            eff_sigma_clip_pos = 10.0
+        else:
+            eff_sigma_clip_neg = sigma_clip_neg
+            eff_sigma_clip_pos = sigma_clip_pos
+
+        # 1. Determine base ranges
         if focus_range is None:
+            # Ensure self.CrossVeloMax/Min and clight are available
             ranges = [
                 tuple(
                     [
@@ -684,31 +726,24 @@ class CCFclass:
                 raise ValueError("focus_range must satisfy lo < hi.")
             ranges = [(lo, hi)]
 
-        # 2. NEW: Apply Splitting Logic
-        # We subdivide the base ranges into n_split smaller chunks
+        # 2. Apply Splitting Logic
         processing_ranges = []
         for start, end in ranges:
             if n_split > 1:
-                # Calculate split points (e.g., 5 parts = 6 boundaries)
                 boundaries = np.linspace(start, end, n_split + 1)
                 for i in range(n_split):
-                    # Create segment (b_i, b_{i+1})
-                    # Note: Adjacent segments share a boundary point.
-                    # This ensures no data gaps.
                     processing_ranges.append((boundaries[i], boundaries[i + 1]))
             else:
                 processing_ranges.append((start, end))
 
-        # Setup outputs
         combined_model = np.full_like(flux, np.nan, dtype=float)
         combined_repl = np.zeros_like(flux, dtype=bool)
         cleaned_flux = flux.copy()
         rng = np.random.default_rng(random_state)
 
-        # --- Internal Worker Function (Unchanged) ---
+        # --- Internal Worker Function ---
         def _clean_one_range_staged(w, f_in, lo, hi):
             in_mask = (w >= lo) & (w <= hi)
-            # Safety check for too few points
             if np.count_nonzero(in_mask) < (deg + 2):
                 return (
                     f_in.copy(),
@@ -720,11 +755,24 @@ class CCFclass:
             yi = f_in[in_mask].copy()
             M = xi.size
 
-            # per-iteration sample size
+            # --- NEW PRE-CLEANING STEP ---
+            # If cleaning absorption, huge dips will drag the first polyfit down.
+            # We crudely fill them in using median stats BEFORE the first fit.
+            if clean_absorption:
+                med_pre = np.median(yi)
+                mad_pre = np.median(np.abs(yi - med_pre))
+                sig_pre = 1.4826 * mad_pre if mad_pre > 0 else np.std(yi)
+                # Identify points significantly below median (e.g., > 2 sigma)
+                # This "pre-fills" the absorption line so the polynomial
+                # sits on top of the continuum/emission immediately.
+                bad_dips = yi < (med_pre - 2.0 * sig_pre)
+                if np.any(bad_dips):
+                    # Replace with median (or random noise around median) to neutralize the dip
+                    yi[bad_dips] = med_pre
+
             k = max(3 * deg + 1, int(np.ceil(sample_frac * M)))
             k = min(k, M)
 
-            # normalize x
             xc = xi.mean()
             xs = xi.std() if xi.std() > 0 else 1.0
             xi0 = (xi - xc) / xs
@@ -736,7 +784,6 @@ class CCFclass:
             model_full_final = np.full_like(f_in, np.nan, dtype=float)
 
             for stage in range(n_stages_eff):
-                # --- average model for this stage ---
                 preds = np.empty((it_per_stage, M), dtype=float)
                 for t in range(it_per_stage):
                     idx = rng.choice(M, size=k, replace=False)
@@ -744,7 +791,6 @@ class CCFclass:
                     preds[t] = np.polyval(coeffs, xi0)
                 model_i = preds.mean(axis=0)
 
-                # --- robust residual σ & asymmetric clipping ---
                 res = yi - model_i
                 med = np.median(res)
                 mad = np.median(np.abs(res - med))
@@ -756,11 +802,12 @@ class CCFclass:
                 sigma = max(float(sigma), float(noise_floor))
 
                 r = res - med
-                outliers_local = (r > sigma_clip_pos * sigma) | (
-                    r < -sigma_clip_neg * sigma
+                # Use the effective clipping values determined at start
+                outliers_local = (r > eff_sigma_clip_pos * sigma) | (
+                        r < -eff_sigma_clip_neg * sigma
                 )
 
-                # --- choose noise scale for inserts ---
+                # --- Noise Source Logic ---
                 if noise_source == "residual":
                     noise_sigma = sigma
                 elif noise_source == "leftwin":
@@ -773,7 +820,6 @@ class CCFclass:
                     noise_sigma = sigma
                 noise_sigma = max(float(noise_sigma), float(noise_floor))
 
-                # --- replace and continue ---
                 if np.any(outliers_local):
                     if add_noise:
                         yi[outliers_local] = model_i[outliers_local] + rng.normal(
@@ -782,7 +828,6 @@ class CCFclass:
                     else:
                         yi[outliers_local] = model_i[outliers_local]
 
-                # accumulate to full-length arrays
                 tmp_mask = np.zeros_like(f_in, dtype=bool)
                 tmp_mask[in_mask] = outliers_local
                 replaced_union |= tmp_mask
@@ -798,32 +843,25 @@ class CCFclass:
             f_out[in_mask] = yi
             return f_out, model_full_final, replaced_union
 
-        # 3. Clean all ranges sequentially on evolving flux
+        # 3. Clean all ranges sequentially
         for lo, hi in processing_ranges:
             cleaned_flux, model_full, replaced_full = _clean_one_range_staged(
                 wave, cleaned_flux, lo, hi
             )
-            # Merge models into the combined array
             msel = ~np.isnan(model_full)
             combined_model[msel] = model_full[msel]
             combined_repl |= replaced_full
 
-        # --- plotting (focused; always when plot=True) ---
+        # --- Plotting ---
         if plot:
             if ax is None:
                 fig, ax = plt.subplots(figsize=(9, 5))
             units = "nm" if self.nm else "Å"
 
-            # For plotting, we just show the full extent
             full_extent_ranges = (
                 [tuple(r) for r in np.atleast_2d(self.CrossCorRangeA)]
                 if focus_range is None
-                else [
-                    (
-                        min(focus_range[0], focus_range[1]),
-                        max(focus_range[0], focus_range[1]),
-                    )
-                ]
+                else [(min(focus_range), max(focus_range))]
             )
 
             mask_total = np.zeros_like(wave, dtype=bool)
@@ -838,13 +876,15 @@ class CCFclass:
 
             ax.plot(wave, f_plot, label="original", alpha=0.8, lw=1)
             if np.any(~np.isnan(m_plot)):
+                label_m = f"model (split={n_split}, deg={deg})"
+                if clean_absorption: label_m += " [AbsClean]"
                 ax.plot(
                     wave,
                     m_plot,
                     ls="--",
                     color="black",
                     alpha=0.6,
-                    label=f"model (split={n_split}, deg={deg})",
+                    label=label_m,
                 )
             ax.plot(wave, c_plot, alpha=0.9, label="cleaned", lw=1.2)
 
@@ -859,20 +899,15 @@ class CCFclass:
                     zorder=5,
                 )
 
-            # Draw vertical lines to show split points if split > 1
             if n_split > 1:
                 for start, end in ranges:
                     boundaries = np.linspace(start, end, n_split + 1)
-                    for b in boundaries[1:-1]:  # Skip start/end
+                    for b in boundaries[1:-1]:
                         ax.axvline(b, color="gray", linestyle=":", alpha=0.5)
 
             lo_all = min(r[0] for r in full_extent_ranges)
             hi_all = max(r[1] for r in full_extent_ranges)
-            pad = (
-                0.05 * (hi_all - lo_all)
-                if hi_all > lo_all
-                else (0.5 if self.nm else 5.0)
-            )
+            pad = (0.05 * (hi_all - lo_all)) if hi_all > lo_all else 5.0
             ax.set_xlim(lo_all - pad, hi_all + pad)
             ax.set_xlabel(f"Wavelength [{units}]")
             ax.set_ylabel("Normalized flux")
@@ -884,9 +919,7 @@ class CCFclass:
             plt.tight_layout()
 
             if self.savePlot:
-                clean_star = re.sub(
-                    r"[^A-Za-z0-9_-]", "_", (self.star_name or "unknown")
-                )
+                clean_star = re.sub(r"[^A-Za-z0-9_-]", "_", (self.star_name or "unknown"))
                 epoch_str = "NA" if self.epoch is None else str(self.epoch)
                 spec_str = "" if self.spectrum is None else (f"_S{self.spectrum}")
                 out_dir = Path("../output") / clean_star / "CLEAN" / (self.run_ts or "")
@@ -940,6 +973,8 @@ class CCFclass:
             skip_clean_epochs = set(skip_clean_epochs)
 
         cleaned_obs_list = []
+        cleaned_template = False
+        can_clean_Template = False
         for i, (ep, w, f) in enumerate(obs_list):
             if ep in skip_clean_epochs:
                 print(f"Info: Skipping cleaning for epoch {ep}")
@@ -952,11 +987,48 @@ class CCFclass:
                     deg_to_use = 6
                     sigma_pos = 7
                     sigma_neg = 8
+                elif (self.star_name == 'Brey  16a' and (self.line_tag == 'O VI 5210-5340' or self.line_tag == 'C IV 17396') or
+              self.star_name == 'HD 269888' and (self.line_tag == "He II 5412 & C IV 5471")):
+                    parts_to_split = 2
+                    deg_to_use = 10
+                    sigma_neg = 4
+                    sigma_pos = 5
+                elif (self.star_name == 'Brey  58a' and self.line_tag == "C IV 20842"):
+                    parts_to_split = 10
+                    deg_to_use = 8
+                    sigma_neg = 4
+                    sigma_pos = 5
+                elif (self.star_name == 'Brey  58a' and self.line_tag == "C IV 17396"):
+                    parts_to_split = 2
+                    deg_to_use = 4
+                    sigma_neg = 3
+                    sigma_pos = 4
                 else:
                     parts_to_split = 8
                     deg_to_use = 6
                     sigma_neg=4
                     sigma_pos=5
+                    can_clean_Template = True
+
+                if can_clean_Template and not cleaned_template:
+                    tpl_flux, _, _ = self.clean_line_with_iterative_poly(
+                    wave=tpl_wave,
+                    flux=tpl_flux,
+                    n_split=parts_to_split,  # <--- Pass the new argument here
+
+                    # Your other robust settings from before:
+                    n_iter=100,
+                    n_stages=20,
+                    sample_frac=0.9,
+                    deg=deg_to_use, # You might be able to LOWER this if you are splitting!
+                            # e.g., deg=5 might be enough if you split into 5 small chunks
+                    sigma_clip_neg=sigma_neg,
+                    sigma_clip_pos=sigma_pos,
+                    random_state=42,
+                    noise_source="leftwin",
+                    plot=False,
+                    )
+                    cleaned_template = True
 
                 f_clean, _, _ = self.clean_line_with_iterative_poly(
                     wave=w,
